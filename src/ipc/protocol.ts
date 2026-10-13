@@ -1,6 +1,51 @@
-export const IPC_VERSION = 1 as const;
+export const IPC_VERSION = 2 as const;
 
 export type BridgeLifecycle = 'stopped' | 'starting' | 'running' | 'stopping' | 'needs_login' | 'error';
+
+export interface UsageWindow {
+  usedPercent: number;
+  remainingPercent: number;
+  windowDurationMins: number | null;
+  resetsAt: number | null;
+}
+
+export interface UsageSnapshot {
+  primary: UsageWindow | null;
+  secondary: UsageWindow | null;
+  planType: string | null;
+  updatedAt: string;
+  stale: boolean;
+  error?: string;
+}
+
+export interface PendingTask {
+  sessionId: string;
+  title: string;
+  cwd: string;
+  updatedAt: string;
+  status: string;
+  score: number;
+  reasons: string[];
+}
+
+export interface TaskSnapshot {
+  candidates: PendingTask[];
+  scannedAt: string;
+  error?: string;
+}
+
+export interface ReminderDecision {
+  eligible: boolean;
+  reason: string;
+  evaluatedAt: string;
+}
+
+export interface WeixinLoginStatus {
+  state: 'idle' | 'starting' | 'waiting_scan' | 'scanned' | 'confirmed' | 'expired' | 'error';
+  qrCodeUrl?: string;
+  updatedAt: string;
+  error?: string;
+}
 
 export interface BridgeStatus {
   protocolVersion: typeof IPC_VERSION;
@@ -9,6 +54,10 @@ export interface BridgeStatus {
   codex: 'disconnected' | 'connecting' | 'connected' | 'error';
   cwd: string;
   updatedAt: string;
+  usage?: UsageSnapshot;
+  tasks?: TaskSnapshot;
+  reminder?: ReminderDecision;
+  weixinLogin?: WeixinLoginStatus;
   lastError?: string;
 }
 
@@ -17,6 +66,8 @@ export type IpcRequest =
   | { v: typeof IPC_VERSION; id: string; type: 'status.get' }
   | { v: typeof IPC_VERSION; id: string; type: 'bridge.start'; cwd?: string }
   | { v: typeof IPC_VERSION; id: string; type: 'bridge.stop' }
+  | { v: typeof IPC_VERSION; id: string; type: 'insights.refresh' }
+  | { v: typeof IPC_VERSION; id: string; type: 'weixin.login.start' }
   | { v: typeof IPC_VERSION; id: string; type: 'shutdown' };
 
 export interface IpcResponse {
@@ -33,7 +84,15 @@ export interface IpcEvent {
   data: unknown;
 }
 
-const requestTypes = new Set(['ping', 'status.get', 'bridge.start', 'bridge.stop', 'shutdown']);
+const requestTypes = new Set([
+  'ping',
+  'status.get',
+  'bridge.start',
+  'bridge.stop',
+  'insights.refresh',
+  'weixin.login.start',
+  'shutdown',
+]);
 
 export function parseRequest(line: string): IpcRequest {
   let value: unknown;

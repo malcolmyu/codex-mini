@@ -6,6 +6,8 @@ export interface RuntimeController {
   currentStatus(): BridgeStatus;
   start(cwd?: string): Promise<BridgeStatus>;
   stop(): Promise<BridgeStatus>;
+  refreshInsights(): Promise<BridgeStatus>;
+  startWeixinLogin(): Promise<BridgeStatus>;
   onStatus(listener: (status: BridgeStatus) => void): () => void;
 }
 
@@ -52,6 +54,12 @@ export class IpcDaemon {
           break;
         case 'bridge.stop':
           this.response(id, await this.runtime.stop());
+          break;
+        case 'insights.refresh':
+          this.response(id, await this.runtime.refreshInsights());
+          break;
+        case 'weixin.login.start':
+          this.response(id, await this.runtime.startWeixinLogin());
           break;
         case 'shutdown':
           this.response(id, await this.runtime.stop());

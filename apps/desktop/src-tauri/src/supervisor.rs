@@ -24,18 +24,30 @@ pub struct BridgeStatus {
     pub cwd: String,
     pub updated_at: String,
     #[serde(default)]
+    pub usage: Option<Value>,
+    #[serde(default)]
+    pub tasks: Option<Value>,
+    #[serde(default)]
+    pub reminder: Option<Value>,
+    #[serde(default)]
+    pub weixin_login: Option<Value>,
+    #[serde(default)]
     pub last_error: Option<String>,
 }
 
 impl Default for BridgeStatus {
     fn default() -> Self {
         Self {
-            protocol_version: 1,
+            protocol_version: 2,
             lifecycle: "starting".into(),
             weixin: "connecting".into(),
             codex: "connecting".into(),
             cwd: project_root().display().to_string(),
             updated_at: "1970-01-01T00:00:00.000Z".into(),
+            usage: None,
+            tasks: None,
+            reminder: None,
+            weixin_login: None,
             last_error: None,
         }
     }
@@ -43,6 +55,8 @@ impl Default for BridgeStatus {
 
 enum SupervisorCommand {
     Restart,
+    RefreshInsights,
+    StartWeixinLogin,
     Shutdown,
 }
 
@@ -70,6 +84,18 @@ impl SupervisorHandle {
     pub fn shutdown(&self) {
         let _ = self.commands.send(SupervisorCommand::Shutdown);
     }
+
+    pub fn refresh_insights(&self) -> Result<(), String> {
+        self.commands
+            .send(SupervisorCommand::RefreshInsights)
+            .map_err(|_| "Bridge supervisor is not running".to_string())
+    }
+
+    pub fn start_weixin_login(&self) -> Result<(), String> {
+        self.commands
+            .send(SupervisorCommand::StartWeixinLogin)
+            .map_err(|_| "Bridge supervisor is not running".to_string())
+    }
 }
 
 enum DaemonOutput {
@@ -90,6 +116,8 @@ fn supervisor_loop(
         if !requested_restart {
             match commands.recv() {
                 Ok(SupervisorCommand::Restart) => requested_restart = true,
+                Ok(SupervisorCommand::RefreshInsights)
+                | Ok(SupervisorCommand::StartWeixinLogin) => requested_restart = true,
                 Ok(SupervisorCommand::Shutdown) | Err(_) => break,
             }
         }
@@ -129,6 +157,12 @@ fn supervisor_loop(
                     requested_restart = true;
                     restart_attempt = 0;
                     break;
+                }
+                Ok(SupervisorCommand::RefreshInsights) => {
+                    let _ = send_request(&mut stdin, "desktop-refresh", "insights.refresh");
+                }
+                Ok(SupervisorCommand::StartWeixinLogin) => {
+                    let _ = send_request(&mut stdin, "desktop-weixin-login", "weixin.login.start");
                 }
                 Ok(SupervisorCommand::Shutdown) | Err(TryRecvError::Disconnected) => {
                     shutting_down = true;
@@ -196,16 +230,27 @@ fn spawn_daemon() -> Result<(Child, ChildStdin, Receiver<DaemonOutput>), String>
     if !daemon.exists() {
         return Err(format!("Bridge daemon is not built: {}", daemon.display()));
     }
-    let node = env::var("CODEX_WECHAT_NODE").unwrap_or_else(|_| "node".into());
-    let mut child = Command::new(&node)
+    let node = node_command(&root);
+    let mut command = Command::new(&node);
+    command
         .arg(&daemon)
         .current_dir(&root)
         .env("CODEX_WECHAT_HOME", &root)
+        .env("NODE_NO_WARNINGS", "1")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Some(node_bin) = node.parent() {
+        let inherited_path = env::var_os("PATH").unwrap_or_default();
+        let paths =
+            std::iter::once(node_bin.to_path_buf()).chain(env::split_paths(&inherited_path));
+        if let Ok(path) = env::join_paths(paths) {
+            command.env("PATH", path);
+        }
+    }
+    let mut child = command
         .spawn()
-        .map_err(|error| format!("Failed to start {node}: {error}"))?;
+        .map_err(|error| format!("Failed to start {}: {error}", node.display()))?;
 
     let stdin = child
         .stdin
@@ -237,8 +282,39 @@ fn spawn_daemon() -> Result<(Child, ChildStdin, Receiver<DaemonOutput>), String>
     Ok((child, stdin, receiver))
 }
 
+fn node_command(root: &std::path::Path) -> PathBuf {
+    if let Some(configured) = env::var_os("CODEX_WECHAT_NODE") {
+        return PathBuf::from(configured);
+    }
+    if let Some(nvm_bin) = env::var_os("NVM_BIN") {
+        let node = PathBuf::from(nvm_bin).join("node");
+        if node.exists() {
+            return node;
+        }
+    }
+    if let (Some(home), Ok(version)) = (
+        env::var_os("HOME"),
+        std::fs::read_to_string(root.join(".nvmrc")),
+    ) {
+        let version = version.trim();
+        let version_dir = if version.starts_with('v') {
+            version.to_string()
+        } else {
+            format!("v{version}")
+        };
+        let node = PathBuf::from(home)
+            .join(".nvm/versions/node")
+            .join(version_dir)
+            .join("bin/node");
+        if node.exists() {
+            return node;
+        }
+    }
+    PathBuf::from("node")
+}
+
 fn send_request(stdin: &mut ChildStdin, id: &str, request_type: &str) -> Result<(), String> {
-    let line = json!({ "v": 1, "id": id, "type": request_type });
+    let line = json!({ "v": 2, "id": id, "type": request_type });
     writeln!(stdin, "{line}").map_err(|error| error.to_string())?;
     stdin.flush().map_err(|error| error.to_string())
 }
@@ -261,7 +337,9 @@ fn wait_for_command(
     shutting_down: &mut bool,
 ) -> bool {
     match commands.recv_timeout(delay) {
-        Ok(SupervisorCommand::Restart) => true,
+        Ok(SupervisorCommand::Restart)
+        | Ok(SupervisorCommand::RefreshInsights)
+        | Ok(SupervisorCommand::StartWeixinLogin) => true,
         Ok(SupervisorCommand::Shutdown) | Err(mpsc::RecvTimeoutError::Disconnected) => {
             *shutting_down = true;
             false
@@ -326,7 +404,7 @@ mod tests {
 
     #[test]
     fn extracts_status_event() {
-        let line = r#"{"v":1,"event":"status.changed","data":{"protocolVersion":1,"lifecycle":"running","weixin":"connected","codex":"connected","cwd":"/project","updatedAt":"2026-10-12T00:00:00.000Z"}}"#;
+        let line = r#"{"v":2,"event":"status.changed","data":{"protocolVersion":2,"lifecycle":"running","weixin":"connected","codex":"connected","cwd":"/project","updatedAt":"2026-10-12T00:00:00.000Z"}}"#;
         let status = parse_daemon_status(line).expect("status event");
         assert_eq!(status.lifecycle, "running");
         assert_eq!(status.cwd, "/project");

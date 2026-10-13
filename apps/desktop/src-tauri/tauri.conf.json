@@ -12,6 +12,7 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "Codex 微信桥",
         "width": 680,
         "height": 560,
@@ -19,10 +20,26 @@
         "minHeight": 500,
         "resizable": true,
         "center": true
+      },
+      {
+        "label": "usage",
+        "title": "Codex 剩余用量",
+        "width": 360,
+        "height": 320,
+        "minWidth": 160,
+        "minHeight": 60,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "visibleOnAllWorkspaces": true,
+        "skipTaskbar": true,
+        "center": false
       }
     ],
     "security": {
-      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'"
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
     }
   },
   "bundle": {

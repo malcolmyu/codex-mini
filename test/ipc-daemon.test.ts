@@ -24,6 +24,8 @@ class FakeRuntime implements RuntimeController {
     this.status = { ...this.status, lifecycle: 'stopped', weixin: 'disconnected', codex: 'disconnected' };
     return this.currentStatus();
   }
+  async refreshInsights() { return this.currentStatus(); }
+  async startWeixinLogin() { return this.currentStatus(); }
   onStatus(listener: (status: BridgeStatus) => void) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
 }
 
@@ -39,9 +41,9 @@ describe('IpcDaemon', () => {
     output.on('data', (chunk) => chunks.push(chunk.toString()));
     const run = new IpcDaemon(new FakeRuntime(), input, output).run();
 
-    input.write('{"v":1,"id":"1","type":"status.get"}\n');
-    input.write('{"v":1,"id":"2","type":"bridge.start","cwd":"/next"}\n');
-    input.write('{"v":1,"id":"3","type":"shutdown"}\n');
+    input.write('{"v":2,"id":"1","type":"status.get"}\n');
+    input.write('{"v":2,"id":"2","type":"bridge.start","cwd":"/next"}\n');
+    input.write('{"v":2,"id":"3","type":"shutdown"}\n');
     await run;
 
     const messages = chunks.join('').trim().split('\n').map((line) => JSON.parse(line));

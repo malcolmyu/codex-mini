@@ -31,6 +31,16 @@ fn restart_bridge(state: State<'_, AppState>) -> Result<BridgeStatus, String> {
 }
 
 #[tauri::command]
+fn refresh_insights(state: State<'_, AppState>) -> Result<(), String> {
+    state.supervisor.refresh_insights()
+}
+
+#[tauri::command]
+fn start_weixin_login(state: State<'_, AppState>) -> Result<(), String> {
+    state.supervisor.start_weixin_login()
+}
+
+#[tauri::command]
 fn get_autostart(app: tauri::AppHandle) -> Result<bool, String> {
     app.autolaunch()
         .is_enabled()
@@ -54,6 +64,13 @@ fn show_main_window(app: &tauri::AppHandle) {
     }
 }
 
+fn show_usage_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("usage") {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
@@ -67,6 +84,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_bridge_status,
             restart_bridge,
+            refresh_insights,
+            start_weixin_login,
             get_autostart,
             set_autostart,
         ])
@@ -76,9 +95,12 @@ pub fn run() {
             app.manage(AppState { status, supervisor });
 
             let open = MenuItem::with_id(app, "open", "打开状态", true, None::<&str>)?;
+            let usage = MenuItem::with_id(app, "usage", "显示用量悬浮窗", true, None::<&str>)?;
+            let refresh = MenuItem::with_id(app, "refresh", "立即检查", true, None::<&str>)?;
+            let login = MenuItem::with_id(app, "login", "重新登录微信", true, None::<&str>)?;
             let restart = MenuItem::with_id(app, "restart", "重启 Bridge", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&open, &restart, &quit])?;
+            let menu = Menu::with_items(app, &[&open, &usage, &refresh, &login, &restart, &quit])?;
             TrayIconBuilder::new()
                 .title("Codex")
                 .tooltip("Codex 微信桥")
@@ -86,6 +108,14 @@ pub fn run() {
                 .show_menu_on_left_click(true)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "open" => show_main_window(app),
+                    "usage" => show_usage_window(app),
+                    "refresh" => {
+                        let _ = app.state::<AppState>().supervisor.refresh_insights();
+                    }
+                    "login" => {
+                        show_main_window(app);
+                        let _ = app.state::<AppState>().supervisor.start_weixin_login();
+                    }
                     "restart" => {
                         let _ = app.state::<AppState>().supervisor.restart();
                     }

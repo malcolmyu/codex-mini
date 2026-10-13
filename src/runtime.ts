@@ -7,6 +7,7 @@ import { IPC_VERSION } from './ipc/protocol.js';
 import { evaluateReminder } from './reminders/policy.js';
 import { ReminderStore } from './reminders/store.js';
 import { CodexTaskScanner } from './tasks/scanner.js';
+import { CodexTaskWatcher } from './tasks/watcher.js';
 import { CodexUsageProbe } from './usage/probe.js';
 import { WeixinApi } from './weixin/api.js';
 import { loadCredentials, saveCredentials, WeixinChannel } from './weixin/channel.js';
@@ -18,6 +19,7 @@ export interface BridgeRuntimeOptions {
   defaultCwd: string;
   usageProbe?: CodexUsageProbe;
   taskScanner?: CodexTaskScanner;
+  taskWatcher?: CodexTaskWatcher;
   weixinApi?: WeixinApi;
   refreshIntervalMs?: number;
 }
@@ -30,9 +32,12 @@ export class BridgeRuntime {
   private loginController: AbortController | null = null;
   private loginTask: Promise<void> | null = null;
   private refreshTimer: NodeJS.Timeout | null = null;
+  private refreshTask: Promise<BridgeStatus> | null = null;
+  private refreshPending = false;
   private readonly listeners = new Set<StatusListener>();
   private readonly usageProbe: CodexUsageProbe;
   private readonly taskScanner: CodexTaskScanner;
+  private readonly taskWatcher: CodexTaskWatcher;
   private readonly weixinApi: WeixinApi;
   private readonly reminderStore: ReminderStore;
   private status: BridgeStatus;
@@ -40,6 +45,7 @@ export class BridgeRuntime {
   constructor(private readonly options: BridgeRuntimeOptions) {
     this.usageProbe = options.usageProbe ?? new CodexUsageProbe();
     this.taskScanner = options.taskScanner ?? new CodexTaskScanner();
+    this.taskWatcher = options.taskWatcher ?? new CodexTaskWatcher();
     this.weixinApi = options.weixinApi ?? new WeixinApi();
     this.reminderStore = new ReminderStore(join(options.projectRoot, '.data', 'reminder-state.json'));
     this.status = this.makeStatus('stopped', 'disconnected', 'disconnected');
@@ -58,6 +64,7 @@ export class BridgeRuntime {
     if (['starting', 'running'].includes(this.status.lifecycle)) return this.currentStatus();
     const resolvedCwd = resolve(cwd);
     this.ensureRefreshTimer();
+    this.ensureTaskWatcher();
     void this.refreshInsights();
     this.update({ ...this.status, ...this.connectionStatus('starting', 'connecting', 'connecting', resolvedCwd) });
 
@@ -135,6 +142,7 @@ export class BridgeRuntime {
     this.loginTask = null;
     if (this.refreshTimer) clearInterval(this.refreshTimer);
     this.refreshTimer = null;
+    this.taskWatcher.stop();
     const bridge = this.bridge;
     const controller = this.controller;
     const task = this.channelTask;
@@ -154,7 +162,27 @@ export class BridgeRuntime {
     return this.currentStatus();
   }
 
-  async refreshInsights(): Promise<BridgeStatus> {
+  refreshInsights(): Promise<BridgeStatus> {
+    this.refreshPending = true;
+    if (this.refreshTask) return this.refreshTask;
+    this.refreshTask = this.drainInsightRefreshes();
+    return this.refreshTask;
+  }
+
+  private async drainInsightRefreshes(): Promise<BridgeStatus> {
+    let status = this.currentStatus();
+    try {
+      while (this.refreshPending) {
+        this.refreshPending = false;
+        status = await this.performRefreshInsights();
+      }
+      return status;
+    } finally {
+      this.refreshTask = null;
+    }
+  }
+
+  private async performRefreshInsights(): Promise<BridgeStatus> {
     let usage: UsageSnapshot | undefined = this.status.usage;
     try {
       usage = await this.usageProbe.read();
@@ -283,8 +311,12 @@ export class BridgeRuntime {
 
   private ensureRefreshTimer(): void {
     if (this.refreshTimer) return;
-    this.refreshTimer = setInterval(() => { void this.refreshInsights(); }, this.options.refreshIntervalMs ?? 10 * 60 * 1_000);
+    this.refreshTimer = setInterval(() => { void this.refreshInsights(); }, this.options.refreshIntervalMs ?? 2 * 60 * 1_000);
     this.refreshTimer.unref();
+  }
+
+  private ensureTaskWatcher(): void {
+    this.taskWatcher.start(() => { void this.refreshInsights(); });
   }
 
   private fail(error: unknown, cwd = this.status.cwd): BridgeStatus {

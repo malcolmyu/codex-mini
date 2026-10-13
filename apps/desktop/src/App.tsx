@@ -3,7 +3,7 @@ import { listen } from '@tauri-apps/api/event';
 import { currentMonitor, getCurrentWindow } from '@tauri-apps/api/window';
 import { LogicalSize, PhysicalPosition } from '@tauri-apps/api/dpi';
 import QRCode from 'qrcode';
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 
 type ComponentStatus = 'disconnected' | 'connecting' | 'connected' | 'needs_login' | 'error';
 
@@ -135,17 +135,14 @@ function LoginPanel({ status, onLogin, busy }: { status: BridgeStatus; onLogin: 
 function UsageWidget({ status }: { status: BridgeStatus }) {
   const tasks = status.tasks?.candidates ?? [];
   const [compact, setCompact] = useState(() => localStorage.getItem('usage-widget-compact') === 'true');
-  const [showTasks, setShowTasks] = useState(false);
-  const [checking, setChecking] = useState(false);
   const [openingTask, setOpeningTask] = useState<string>();
   const [openError, setOpenError] = useState<string>();
-  const refreshStartedAt = useRef(0);
   const primary = Math.round(status.usage?.primary?.remainingPercent ?? 0);
   const secondary = Math.round(status.usage?.secondary?.remainingPercent ?? 0);
 
-  async function resizeWidget(nextCompact: boolean, nextShowTasks = showTasks) {
+  async function resizeWidget(nextCompact: boolean) {
     const window = getCurrentWindow();
-    const height = nextCompact ? 80 : nextShowTasks ? 520 : 320;
+    const height = nextCompact ? 80 : 440;
     await window.setSize(new LogicalSize(nextCompact ? 204 : 360, height));
     const [position, size, monitor] = await Promise.all([
       window.outerPosition(),
@@ -166,18 +163,6 @@ function UsageWidget({ status }: { status: BridgeStatus }) {
     setCompact(nextCompact);
     localStorage.setItem('usage-widget-compact', String(nextCompact));
     void resizeWidget(nextCompact);
-  }
-
-  async function checkTasks() {
-    setShowTasks(true);
-    setChecking(true);
-    refreshStartedAt.current = Date.now();
-    await resizeWidget(false, true);
-    try {
-      await invoke('refresh_insights');
-    } catch {
-      setChecking(false);
-    }
   }
 
   async function openTask(task: PendingTask) {
@@ -220,11 +205,6 @@ function UsageWidget({ status }: { status: BridgeStatus }) {
     };
   }, [compact]);
 
-  useEffect(() => {
-    if (!checking || !status.tasks?.scannedAt) return;
-    if (new Date(status.tasks.scannedAt).getTime() >= refreshStartedAt.current) setChecking(false);
-  }, [checking, status.tasks?.scannedAt]);
-
   if (compact) {
     return (
       <main className="mini-widget" data-tauri-drag-region>
@@ -261,38 +241,33 @@ function UsageWidget({ status }: { status: BridgeStatus }) {
         <UsageMeter title="5 小时" value={status.usage?.primary} />
         <UsageMeter title="本周" value={status.usage?.secondary} />
       </div>
-      <div className="widget-tasks">
-        <div><span>待继续</span><strong>{tasks.length} 项</strong></div>
-        <p>{tasks[0]?.title ?? status.reminder?.reason ?? '正在扫描本地任务…'}</p>
+      <div className="widget-section-title">
+        <strong>推荐关注的对话</strong>
+        <span>{tasks.length} 项</span>
       </div>
-      {showTasks && (
-        <div className="widget-task-list" aria-live="polite">
-          {tasks.length === 0 ? (
-            <p>{checking ? '正在检查本地 Codex 会话…' : '没有检测到需要继续的任务。'}</p>
-          ) : (
-            <ol>{tasks.slice(0, 6).map((task) => (
-              <li key={task.sessionId}>
-                <button
-                  type="button"
-                  onClick={() => void openTask(task)}
-                  disabled={openingTask === task.sessionId}
-                  aria-label={`在 Codex 中打开：${task.title}`}
-                >
-                  <span className="widget-task-copy">
-                    <strong>{task.title}</strong>
-                    <span>{task.reasons.join(' · ')}</span>
-                  </span>
-                  <span className="widget-task-open" aria-hidden="true">{openingTask === task.sessionId ? '…' : '↗'}</span>
-                </button>
-              </li>
-            ))}</ol>
-          )}
-        </div>
-      )}
+      <div className="widget-task-list" aria-live="polite">
+        {tasks.length === 0 ? (
+          <p>{status.tasks?.error ?? '正在扫描本地 Codex 会话…'}</p>
+        ) : (
+          <ol>{tasks.slice(0, 6).map((task) => (
+            <li key={task.sessionId}>
+              <button
+                type="button"
+                onClick={() => void openTask(task)}
+                disabled={openingTask === task.sessionId}
+                aria-label={`在 Codex 中打开：${task.title}`}
+              >
+                <span className="widget-task-copy">
+                  <strong>{task.title}</strong>
+                  <span>{task.reasons.join(' · ')}</span>
+                </span>
+                <span className="widget-task-open" aria-hidden="true">{openingTask === task.sessionId ? '…' : '↗'}</span>
+              </button>
+            </li>
+          ))}</ol>
+        )}
+      </div>
       {openError && <p className="widget-open-error">{openError}</p>}
-      <button className="widget-refresh" type="button" onClick={() => void checkTasks()} disabled={checking}>
-        {checking ? '正在检查…' : showTasks ? '重新检查' : '立即检查'}
-      </button>
     </main>
   );
 }

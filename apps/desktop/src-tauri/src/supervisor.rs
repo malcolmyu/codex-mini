@@ -283,29 +283,40 @@ fn spawn_daemon() -> Result<(Child, ChildStdin, Receiver<DaemonOutput>), String>
 }
 
 fn node_command(root: &std::path::Path) -> PathBuf {
-    if let Some(configured) = env::var_os("CODEX_WECHAT_NODE") {
-        return PathBuf::from(configured);
+    resolve_node_command(
+        root,
+        env::var_os("CODEX_WECHAT_NODE").map(PathBuf::from),
+        env::var_os("HOME").map(PathBuf::from),
+        env::var_os("NVM_BIN").map(PathBuf::from),
+    )
+}
+
+fn resolve_node_command(
+    root: &std::path::Path,
+    configured: Option<PathBuf>,
+    home: Option<PathBuf>,
+    nvm_bin: Option<PathBuf>,
+) -> PathBuf {
+    if let Some(configured) = configured {
+        return configured;
     }
-    if let Some(nvm_bin) = env::var_os("NVM_BIN") {
-        let node = PathBuf::from(nvm_bin).join("node");
-        if node.exists() {
-            return node;
-        }
-    }
-    if let (Some(home), Ok(version)) = (
-        env::var_os("HOME"),
-        std::fs::read_to_string(root.join(".nvmrc")),
-    ) {
+    if let (Some(home), Ok(version)) = (home, std::fs::read_to_string(root.join(".nvmrc"))) {
         let version = version.trim();
         let version_dir = if version.starts_with('v') {
             version.to_string()
         } else {
             format!("v{version}")
         };
-        let node = PathBuf::from(home)
+        let node = home
             .join(".nvm/versions/node")
             .join(version_dir)
             .join("bin/node");
+        if node.exists() {
+            return node;
+        }
+    }
+    if let Some(nvm_bin) = nvm_bin {
+        let node = nvm_bin.join("node");
         if node.exists() {
             return node;
         }
@@ -401,6 +412,7 @@ fn restart_delay(attempt: usize) -> Option<Duration> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn extracts_status_event() {
@@ -415,5 +427,29 @@ mod tests {
         assert_eq!(restart_delay(0), Some(Duration::from_secs(1)));
         assert_eq!(restart_delay(3), Some(Duration::from_secs(30)));
         assert_eq!(restart_delay(5), None);
+    }
+
+    #[test]
+    fn project_nvmrc_takes_priority_over_the_active_nvm_version() {
+        let base = env::temp_dir().join(format!(
+            "codex-wechat-node-resolution-{}",
+            std::process::id()
+        ));
+        let root = base.join("project");
+        let home = base.join("home");
+        let pinned_node = home.join(".nvm/versions/node/v22.23.2/bin/node");
+        let active_nvm = base.join("active-nvm");
+        fs::create_dir_all(pinned_node.parent().expect("pinned node parent"))
+            .expect("create pinned node directory");
+        fs::create_dir_all(&active_nvm).expect("create active nvm directory");
+        fs::create_dir_all(&root).expect("create project directory");
+        fs::write(root.join(".nvmrc"), "22.23.2\n").expect("write nvmrc");
+        fs::write(&pinned_node, "").expect("create pinned node");
+        fs::write(active_nvm.join("node"), "").expect("create active node");
+
+        let resolved = resolve_node_command(&root, None, Some(home), Some(active_nvm));
+
+        assert_eq!(resolved, pinned_node);
+        fs::remove_dir_all(base).expect("remove node resolution fixture");
     }
 }

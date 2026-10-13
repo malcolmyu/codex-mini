@@ -3,7 +3,7 @@ import { listen } from '@tauri-apps/api/event';
 import { currentMonitor, getCurrentWindow } from '@tauri-apps/api/window';
 import { LogicalSize, PhysicalPosition } from '@tauri-apps/api/dpi';
 import QRCode from 'qrcode';
-import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 
 type ComponentStatus = 'disconnected' | 'connecting' | 'connected' | 'needs_login' | 'error';
 
@@ -135,12 +135,16 @@ function LoginPanel({ status, onLogin, busy }: { status: BridgeStatus; onLogin: 
 function UsageWidget({ status }: { status: BridgeStatus }) {
   const tasks = status.tasks?.candidates ?? [];
   const [compact, setCompact] = useState(() => localStorage.getItem('usage-widget-compact') === 'true');
+  const [showTasks, setShowTasks] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const refreshStartedAt = useRef(0);
   const primary = Math.round(status.usage?.primary?.remainingPercent ?? 0);
   const secondary = Math.round(status.usage?.secondary?.remainingPercent ?? 0);
 
-  async function resizeWidget(nextCompact: boolean) {
+  async function resizeWidget(nextCompact: boolean, nextShowTasks = showTasks) {
     const window = getCurrentWindow();
-    await window.setSize(new LogicalSize(nextCompact ? 204 : 360, nextCompact ? 80 : 320));
+    const height = nextCompact ? 80 : nextShowTasks ? 520 : 320;
+    await window.setSize(new LogicalSize(nextCompact ? 204 : 360, height));
     const [position, size, monitor] = await Promise.all([
       window.outerPosition(),
       window.outerSize(),
@@ -162,6 +166,18 @@ function UsageWidget({ status }: { status: BridgeStatus }) {
     void resizeWidget(nextCompact);
   }
 
+  async function checkTasks() {
+    setShowTasks(true);
+    setChecking(true);
+    refreshStartedAt.current = Date.now();
+    await resizeWidget(false, true);
+    try {
+      await invoke('refresh_insights');
+    } catch {
+      setChecking(false);
+    }
+  }
+
   useEffect(() => {
     const window = getCurrentWindow();
     const saved = localStorage.getItem('usage-widget-position');
@@ -181,10 +197,33 @@ function UsageWidget({ status }: { status: BridgeStatus }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    document.documentElement.classList.toggle('usage-compact', compact);
+    document.body.classList.toggle('usage-compact', compact);
+    return () => {
+      document.documentElement.classList.remove('usage-compact');
+      document.body.classList.remove('usage-compact');
+    };
+  }, [compact]);
+
+  useEffect(() => {
+    if (!checking || !status.tasks?.scannedAt) return;
+    if (new Date(status.tasks.scannedAt).getTime() >= refreshStartedAt.current) setChecking(false);
+  }, [checking, status.tasks?.scannedAt]);
+
   if (compact) {
     return (
       <main className="mini-widget" data-tauri-drag-region>
-        <div className="mini-ring" style={{ '--quota': `${primary * 3.6}deg` } as CSSProperties} data-tauri-drag-region>
+        <div
+          className="mini-rings"
+          style={{
+            '--primary-quota': `${primary * 3.6}deg`,
+            '--weekly-quota': `${secondary * 3.6}deg`,
+          } as CSSProperties}
+          data-tauri-drag-region
+          aria-label={`5 小时剩余 ${primary}%，本周剩余 ${secondary}%`}
+        >
+          <div className="mini-ring-inner" data-tauri-drag-region />
           <span>{primary}</span>
         </div>
         <div className="mini-copy" data-tauri-drag-region>
@@ -212,7 +251,23 @@ function UsageWidget({ status }: { status: BridgeStatus }) {
         <div><span>待继续</span><strong>{tasks.length} 项</strong></div>
         <p>{tasks[0]?.title ?? status.reminder?.reason ?? '正在扫描本地任务…'}</p>
       </div>
-      <button className="widget-refresh" type="button" onClick={() => void invoke('refresh_insights')}>立即检查</button>
+      {showTasks && (
+        <div className="widget-task-list" aria-live="polite">
+          {tasks.length === 0 ? (
+            <p>{checking ? '正在检查本地 Codex 会话…' : '没有检测到需要继续的任务。'}</p>
+          ) : (
+            <ol>{tasks.slice(0, 6).map((task) => (
+              <li key={task.sessionId}>
+                <strong>{task.title}</strong>
+                <span>{task.reasons.join(' · ')}</span>
+              </li>
+            ))}</ol>
+          )}
+        </div>
+      )}
+      <button className="widget-refresh" type="button" onClick={() => void checkTasks()} disabled={checking}>
+        {checking ? '正在检查…' : showTasks ? '重新检查' : '立即检查'}
+      </button>
     </main>
   );
 }

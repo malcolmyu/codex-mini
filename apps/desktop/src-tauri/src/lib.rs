@@ -40,6 +40,31 @@ fn start_weixin_login(state: State<'_, AppState>) -> Result<(), String> {
     state.supervisor.start_weixin_login()
 }
 
+fn valid_thread_id(value: &str) -> bool {
+    value.len() >= 32
+        && value.len() <= 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+}
+
+#[tauri::command]
+fn open_codex_thread(session_id: String) -> Result<(), String> {
+    if !valid_thread_id(&session_id) {
+        return Err("无效的 Codex 会话 ID".into());
+    }
+    let url = format!("codex://threads/{session_id}");
+    let status = std::process::Command::new("/usr/bin/open")
+        .args(["-b", "com.openai.codex", &url])
+        .status()
+        .map_err(|error| format!("无法唤起 Codex: {error}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("Codex 无法打开该会话（退出状态 {status}）"))
+    }
+}
+
 #[tauri::command]
 fn get_autostart(app: tauri::AppHandle) -> Result<bool, String> {
     app.autolaunch()
@@ -86,6 +111,7 @@ pub fn run() {
             restart_bridge,
             refresh_insights,
             start_weixin_login,
+            open_codex_thread,
             get_autostart,
             set_autostart,
         ])
@@ -139,4 +165,16 @@ pub fn run() {
             handle.state::<AppState>().supervisor.shutdown();
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::valid_thread_id;
+
+    #[test]
+    fn validates_codex_thread_ids() {
+        assert!(valid_thread_id("01a1261f-f32d-7e60-a4d6-655612da6386"));
+        assert!(!valid_thread_id("../not-a-thread"));
+        assert!(!valid_thread_id("too-short"));
+    }
 }

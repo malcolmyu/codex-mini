@@ -137,6 +137,8 @@ function UsageWidget({ status }: { status: BridgeStatus }) {
   const [compact, setCompact] = useState(() => localStorage.getItem('usage-widget-compact') === 'true');
   const [showTasks, setShowTasks] = useState(false);
   const [checking, setChecking] = useState(false);
+  const [openingTask, setOpeningTask] = useState<string>();
+  const [openError, setOpenError] = useState<string>();
   const refreshStartedAt = useRef(0);
   const primary = Math.round(status.usage?.primary?.remainingPercent ?? 0);
   const secondary = Math.round(status.usage?.secondary?.remainingPercent ?? 0);
@@ -175,6 +177,18 @@ function UsageWidget({ status }: { status: BridgeStatus }) {
       await invoke('refresh_insights');
     } catch {
       setChecking(false);
+    }
+  }
+
+  async function openTask(task: PendingTask) {
+    setOpeningTask(task.sessionId);
+    setOpenError(undefined);
+    try {
+      await invoke('open_codex_thread', { sessionId: task.sessionId });
+    } catch (error) {
+      setOpenError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setOpeningTask(undefined);
     }
   }
 
@@ -258,13 +272,24 @@ function UsageWidget({ status }: { status: BridgeStatus }) {
           ) : (
             <ol>{tasks.slice(0, 6).map((task) => (
               <li key={task.sessionId}>
-                <strong>{task.title}</strong>
-                <span>{task.reasons.join(' · ')}</span>
+                <button
+                  type="button"
+                  onClick={() => void openTask(task)}
+                  disabled={openingTask === task.sessionId}
+                  aria-label={`在 Codex 中打开：${task.title}`}
+                >
+                  <span className="widget-task-copy">
+                    <strong>{task.title}</strong>
+                    <span>{task.reasons.join(' · ')}</span>
+                  </span>
+                  <span className="widget-task-open" aria-hidden="true">{openingTask === task.sessionId ? '…' : '↗'}</span>
+                </button>
               </li>
             ))}</ol>
           )}
         </div>
       )}
+      {openError && <p className="widget-open-error">{openError}</p>}
       <button className="widget-refresh" type="button" onClick={() => void checkTasks()} disabled={checking}>
         {checking ? '正在检查…' : showTasks ? '重新检查' : '立即检查'}
       </button>

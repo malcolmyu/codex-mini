@@ -29,10 +29,21 @@ export interface UsageProbeOptions {
   now?: () => Date;
 }
 
-function codexCommand(): string {
+export function codexCommand(): string {
   if (process.env.CODEX_BIN) return process.env.CODEX_BIN;
   const local = join(homedir(), '.local', 'bin', 'codex');
   return existsSync(local) ? local : 'codex';
+}
+
+export function buildCodexUsageEnvironment(
+  base: NodeJS.ProcessEnv = process.env,
+  home = homedir(),
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...base, CODEX_HOME: join(home, '.codex') };
+  delete env.CODEX_API_KEY;
+  delete env.CODEX_ACCESS_TOKEN;
+  delete env.OPENAI_API_KEY;
+  return env;
 }
 
 function numberOrNull(value: unknown): number | null {
@@ -69,6 +80,7 @@ export class CodexUsageProbe {
 
   async read(): Promise<UsageSnapshot> {
     const child = spawn(this.options.command ?? codexCommand(), ['app-server', '--stdio'], {
+      env: buildCodexUsageEnvironment(),
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     try {

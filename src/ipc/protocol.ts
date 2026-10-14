@@ -26,11 +26,15 @@ export interface PendingTask {
   status: string;
   score: number;
   reasons: string[];
+  summary?: string;
+  recommendationReason?: string;
+  relevanceScore?: number;
 }
 
 export interface TaskSnapshot {
   candidates: PendingTask[];
   scannedAt: string;
+  analyzing?: boolean;
   error?: string;
 }
 

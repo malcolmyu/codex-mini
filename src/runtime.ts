@@ -7,6 +7,7 @@ import { IPC_VERSION } from './ipc/protocol.js';
 import { evaluateReminder } from './reminders/policy.js';
 import { ReminderStore } from './reminders/store.js';
 import { CodexTaskScanner } from './tasks/scanner.js';
+import { CodexTaskSummarizer } from './tasks/summarizer.js';
 import { CodexTaskWatcher } from './tasks/watcher.js';
 import { CodexUsageProbe } from './usage/probe.js';
 import { WeixinApi } from './weixin/api.js';
@@ -19,6 +20,7 @@ export interface BridgeRuntimeOptions {
   defaultCwd: string;
   usageProbe?: CodexUsageProbe;
   taskScanner?: CodexTaskScanner;
+  taskSummarizer?: CodexTaskSummarizer;
   taskWatcher?: CodexTaskWatcher;
   weixinApi?: WeixinApi;
   refreshIntervalMs?: number;
@@ -33,10 +35,12 @@ export class BridgeRuntime {
   private loginTask: Promise<void> | null = null;
   private refreshTimer: NodeJS.Timeout | null = null;
   private refreshTask: Promise<BridgeStatus> | null = null;
-  private refreshPending = false;
+  private usageRefreshPending = false;
+  private taskRefreshPending = false;
   private readonly listeners = new Set<StatusListener>();
   private readonly usageProbe: CodexUsageProbe;
   private readonly taskScanner: CodexTaskScanner;
+  private readonly taskSummarizer: CodexTaskSummarizer;
   private readonly taskWatcher: CodexTaskWatcher;
   private readonly weixinApi: WeixinApi;
   private readonly reminderStore: ReminderStore;
@@ -45,6 +49,9 @@ export class BridgeRuntime {
   constructor(private readonly options: BridgeRuntimeOptions) {
     this.usageProbe = options.usageProbe ?? new CodexUsageProbe();
     this.taskScanner = options.taskScanner ?? new CodexTaskScanner();
+    this.taskSummarizer = options.taskSummarizer ?? new CodexTaskSummarizer({
+      cachePath: join(options.projectRoot, '.data', 'task-summary-cache.json'),
+    });
     this.taskWatcher = options.taskWatcher ?? new CodexTaskWatcher();
     this.weixinApi = options.weixinApi ?? new WeixinApi();
     this.reminderStore = new ReminderStore(join(options.projectRoot, '.data', 'reminder-state.json'));
@@ -163,7 +170,15 @@ export class BridgeRuntime {
   }
 
   refreshInsights(): Promise<BridgeStatus> {
-    this.refreshPending = true;
+    this.usageRefreshPending = true;
+    this.taskRefreshPending = true;
+    if (this.refreshTask) return this.refreshTask;
+    this.refreshTask = this.drainInsightRefreshes();
+    return this.refreshTask;
+  }
+
+  refreshTasks(): Promise<BridgeStatus> {
+    this.taskRefreshPending = true;
     if (this.refreshTask) return this.refreshTask;
     this.refreshTask = this.drainInsightRefreshes();
     return this.refreshTask;
@@ -172,9 +187,11 @@ export class BridgeRuntime {
   private async drainInsightRefreshes(): Promise<BridgeStatus> {
     let status = this.currentStatus();
     try {
-      while (this.refreshPending) {
-        this.refreshPending = false;
-        status = await this.performRefreshInsights();
+      while (this.usageRefreshPending || this.taskRefreshPending) {
+        const includeUsage = this.usageRefreshPending;
+        this.usageRefreshPending = false;
+        this.taskRefreshPending = false;
+        status = await this.performRefreshInsights(includeUsage);
       }
       return status;
     } finally {
@@ -182,25 +199,41 @@ export class BridgeRuntime {
     }
   }
 
-  private async performRefreshInsights(): Promise<BridgeStatus> {
+  private async performRefreshInsights(includeUsage: boolean): Promise<BridgeStatus> {
     let usage: UsageSnapshot | undefined = this.status.usage;
-    try {
-      usage = await this.usageProbe.read();
-    } catch (error) {
-      usage = {
-        ...(usage ?? { primary: null, secondary: null, planType: null, updatedAt: new Date().toISOString() }),
-        stale: true,
-        error: error instanceof Error ? error.message : String(error),
-      };
+    if (includeUsage) {
+      try {
+        usage = await this.usageProbe.read();
+      } catch (error) {
+        usage = {
+          ...(usage ?? { primary: null, secondary: null, planType: null, updatedAt: new Date().toISOString() }),
+          stale: true,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
     }
 
     let tasks: TaskSnapshot;
     try {
       tasks = this.taskScanner.scan();
+      if (tasks.candidates.length > 0) {
+        this.update({
+          ...this.status,
+          usage,
+          tasks: { candidates: [], scannedAt: tasks.scannedAt, analyzing: true },
+          updatedAt: new Date().toISOString(),
+        });
+        tasks = {
+          ...tasks,
+          candidates: await this.taskSummarizer.summarize(tasks.candidates),
+          analyzing: false,
+        };
+      }
     } catch (error) {
       tasks = {
-        candidates: this.status.tasks?.candidates ?? [],
+        candidates: [],
         scannedAt: new Date().toISOString(),
+        analyzing: false,
         error: error instanceof Error ? error.message : String(error),
       };
     }
@@ -212,7 +245,10 @@ export class BridgeRuntime {
       const text = [
         `Codex 还有额度可用，${reminder.reason}：`,
         '',
-        ...selected.map((task, index) => `${index + 1}. ${task.title}\n   ${task.reasons.join('、')}`),
+        ...selected.map(
+          (task, index) =>
+            `${index + 1}. ${task.summary ?? task.title}\n   ${task.recommendationReason ?? task.reasons.join('、')}`,
+        ),
         '',
         '回复序号继续任务，例如：1',
         '也可以回复：稍后 1 / 已解决 1 / 忽略 1',
@@ -316,7 +352,7 @@ export class BridgeRuntime {
   }
 
   private ensureTaskWatcher(): void {
-    this.taskWatcher.start(() => { void this.refreshInsights(); });
+    this.taskWatcher.start(() => { void this.refreshTasks(); });
   }
 
   private fail(error: unknown, cwd = this.status.cwd): BridgeStatus {

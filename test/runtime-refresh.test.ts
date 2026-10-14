@@ -21,7 +21,7 @@ function usage(): UsageSnapshot {
 }
 
 describe('BridgeRuntime insight refresh', () => {
-  it('runs one follow-up refresh when a database change arrives during a refresh', async () => {
+  it('runs one task-only follow-up when a database change arrives during a usage refresh', async () => {
     const projectRoot = await mkdtemp(join(tmpdir(), 'codex-runtime-refresh-'));
     directories.push(projectRoot);
     const usageProbe = new CodexUsageProbe();
@@ -44,11 +44,11 @@ describe('BridgeRuntime insight refresh', () => {
 
     const firstRefresh = runtime.refreshInsights();
     await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1));
-    const queuedRefresh = runtime.refreshInsights();
+    const queuedRefresh = runtime.refreshTasks();
     releaseFirst?.(usage());
     await Promise.all([firstRefresh, queuedRefresh]);
 
-    expect(read).toHaveBeenCalledTimes(2);
+    expect(read).toHaveBeenCalledTimes(1);
     expect(scan).toHaveBeenCalledTimes(2);
   });
 });

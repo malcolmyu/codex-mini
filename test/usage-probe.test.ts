@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeUsageResponse, normalizeWindow } from '../src/usage/probe.js';
+import { buildCodexUsageEnvironment, normalizeUsageResponse, normalizeWindow } from '../src/usage/probe.js';
 
 describe('Codex usage normalization', () => {
   it('converts used quota into remaining quota', () => {
@@ -26,5 +26,18 @@ describe('Codex usage normalization', () => {
     expect(result.primary?.remainingPercent).toBe(75);
     expect(result.secondary?.remainingPercent).toBe(90);
     expect(result.updatedAt).toBe(now.toISOString());
+  });
+
+  it('isolates the usage probe from host Codex credentials', () => {
+    expect(buildCodexUsageEnvironment({
+      CODEX_HOME: '/tmp/host-codex',
+      CODEX_API_KEY: 'host-api-key',
+      CODEX_ACCESS_TOKEN: 'host-access-token',
+      OPENAI_API_KEY: 'host-openai-key',
+      PATH: '/usr/bin',
+    }, '/Users/tester')).toEqual({
+      CODEX_HOME: '/Users/tester/.codex',
+      PATH: '/usr/bin',
+    });
   });
 });

@@ -7,6 +7,7 @@
 
 * { box-sizing: border-box; }
 html, body, #root { margin: 0; min-width: 0; min-height: 100%; background: transparent !important; }
+html.usage-window, html.usage-window body, html.usage-window #root { border-radius: 20px; overflow: hidden; }
 html.usage-compact, html.usage-compact body, html.usage-compact #root { border-radius: 999px; overflow: hidden; }
 button, input { font: inherit; }
 button { border: 0; cursor: pointer; }
@@ -76,8 +77,9 @@ button:disabled { opacity: .55; cursor: wait; }
 .toggle input { accent-color: #2c7449; }
 footer { margin-top: 26px; color: #8a948e; text-align: center; font-size: 10px; }
 
-.widget-shell { min-height: 100vh; padding: 14px; overflow: hidden; background: linear-gradient(145deg, #f8faf6, #eaf0e7); border: 1px solid #d6dfd5; user-select: none; -webkit-user-select: none; }
-.widget-head { display: flex; align-items: center; justify-content: space-between; min-height: 34px; }
+.widget-shell { min-height: 100vh; padding: 14px; overflow: hidden; border: 1px solid #d6dfd5; border-radius: 20px; background: linear-gradient(145deg, #f8faf6, #eaf0e7); user-select: none; -webkit-user-select: none; }
+.widget-head { display: flex; align-items: center; justify-content: space-between; min-height: 52px; margin: -6px -4px 0; padding: 6px 4px 8px; cursor: grab; }
+.widget-head:active { cursor: grabbing; }
 .widget-head > div { display: flex; align-items: center; gap: 9px; font-size: 13px; }
 .widget-actions { display: flex; gap: 6px; }
 .widget-mark { width: 28px; height: 28px; border-radius: 9px; font-size: 14px; }

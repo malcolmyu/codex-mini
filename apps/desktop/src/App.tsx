@@ -4,6 +4,7 @@ import { currentMonitor, getCurrentWindow } from '@tauri-apps/api/window';
 import { LogicalSize, PhysicalPosition } from '@tauri-apps/api/dpi';
 import QRCode from 'qrcode';
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { formatCompactReset } from './usage-format';
 
 type ComponentStatus = 'disconnected' | 'connecting' | 'connected' | 'needs_login' | 'error';
 
@@ -22,6 +23,9 @@ interface PendingTask {
   status: string;
   score: number;
   reasons: string[];
+  summary?: string;
+  recommendationReason?: string;
+  relevanceScore?: number;
 }
 
 interface BridgeStatus {
@@ -39,7 +43,7 @@ interface BridgeStatus {
     stale: boolean;
     error?: string;
   };
-  tasks?: { candidates: PendingTask[]; scannedAt: string; error?: string };
+  tasks?: { candidates: PendingTask[]; scannedAt: string; analyzing?: boolean; error?: string };
   reminder?: { eligible: boolean; reason: string; evaluatedAt: string };
   weixinLogin?: {
     state: 'idle' | 'starting' | 'waiting_scan' | 'scanned' | 'confirmed' | 'expired' | 'error';
@@ -197,6 +201,15 @@ function UsageWidget({ status }: { status: BridgeStatus }) {
   }, []);
 
   useEffect(() => {
+    document.documentElement.classList.add('usage-window');
+    document.body.classList.add('usage-window');
+    return () => {
+      document.documentElement.classList.remove('usage-window');
+      document.body.classList.remove('usage-window');
+    };
+  }, []);
+
+  useEffect(() => {
     document.documentElement.classList.toggle('usage-compact', compact);
     document.body.classList.toggle('usage-compact', compact);
     return () => {
@@ -222,7 +235,7 @@ function UsageWidget({ status }: { status: BridgeStatus }) {
         </div>
         <div className="mini-copy" data-tauri-drag-region>
           <strong>{primary}<small>%</small></strong>
-          <span>周 {secondary}% · {tasks.length} 项</span>
+          <span>{formatCompactReset(status.usage?.primary?.resetsAt)}</span>
         </div>
         <button type="button" aria-label="展开用量窗口" onClick={() => toggleCompact(false)}>›</button>
       </main>
@@ -243,11 +256,11 @@ function UsageWidget({ status }: { status: BridgeStatus }) {
       </div>
       <div className="widget-section-title">
         <strong>推荐关注的对话</strong>
-        <span>{tasks.length} 项</span>
+        <span>{status.tasks?.analyzing ? 'Codex 分析中…' : `${tasks.length} 项`}</span>
       </div>
       <div className="widget-task-list" aria-live="polite">
         {tasks.length === 0 ? (
-          <p>{status.tasks?.error ?? '正在扫描本地 Codex 会话…'}</p>
+          <p>{status.tasks?.error ?? (status.tasks?.analyzing ? 'Codex 正在整理最近的会话…' : '暂时没有值得继续关注的对话。')}</p>
         ) : (
           <ol>{tasks.slice(0, 6).map((task) => (
             <li key={task.sessionId}>
@@ -257,9 +270,9 @@ function UsageWidget({ status }: { status: BridgeStatus }) {
                 disabled={openingTask === task.sessionId}
                 aria-label={`在 Codex 中打开：${task.title}`}
               >
-                <span className="widget-task-copy">
-                  <strong>{task.title}</strong>
-                  <span>{task.reasons.join(' · ')}</span>
+                  <span className="widget-task-copy">
+                    <strong>{task.summary ?? task.title}</strong>
+                    <span>{task.recommendationReason ?? task.reasons.join(' · ')}</span>
                 </span>
                 <span className="widget-task-open" aria-hidden="true">{openingTask === task.sessionId ? '…' : '↗'}</span>
               </button>
@@ -330,8 +343,8 @@ function MainWindow({ status, setStatus }: { status: BridgeStatus; setStatus: (s
         {tasks.length === 0 ? <p className="empty">{status.tasks?.error ?? '没有检测到需要继续的问题。'}</p> : (
           <ol>{tasks.slice(0, 5).map((task) => (
             <li key={task.sessionId}>
-              <strong>{task.title}</strong>
-              <span>{task.reasons.join(' · ')}</span>
+              <strong>{task.summary ?? task.title}</strong>
+              <span>{task.recommendationReason ?? task.reasons.join(' · ')}</span>
               <code>{task.cwd}</code>
             </li>
           ))}</ol>

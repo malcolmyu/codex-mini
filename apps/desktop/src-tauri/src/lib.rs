@@ -2,11 +2,7 @@ mod supervisor;
 
 use std::sync::{Arc, Mutex};
 use supervisor::{BridgeStatus, SupervisorHandle};
-use tauri::{
-    menu::{Menu, MenuItem},
-    tray::TrayIconBuilder,
-    Manager, State, WindowEvent,
-};
+use tauri::{Manager, State, WindowEvent};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt as AutostartManagerExt};
 
 struct AppState {
@@ -119,36 +115,6 @@ pub fn run() {
             let status = Arc::new(Mutex::new(BridgeStatus::default()));
             let supervisor = SupervisorHandle::spawn(app.handle().clone(), status.clone());
             app.manage(AppState { status, supervisor });
-
-            let open = MenuItem::with_id(app, "open", "打开状态", true, None::<&str>)?;
-            let usage = MenuItem::with_id(app, "usage", "显示用量悬浮窗", true, None::<&str>)?;
-            let refresh = MenuItem::with_id(app, "refresh", "立即检查", true, None::<&str>)?;
-            let login = MenuItem::with_id(app, "login", "重新登录微信", true, None::<&str>)?;
-            let restart = MenuItem::with_id(app, "restart", "重启 Bridge", true, None::<&str>)?;
-            let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&open, &usage, &refresh, &login, &restart, &quit])?;
-            TrayIconBuilder::new()
-                .title("Codex")
-                .tooltip("Codex 微信桥")
-                .menu(&menu)
-                .show_menu_on_left_click(true)
-                .on_menu_event(|app, event| match event.id.as_ref() {
-                    "open" => show_main_window(app),
-                    "usage" => show_usage_window(app),
-                    "refresh" => {
-                        let _ = app.state::<AppState>().supervisor.refresh_insights();
-                    }
-                    "login" => {
-                        show_main_window(app);
-                        let _ = app.state::<AppState>().supervisor.start_weixin_login();
-                    }
-                    "restart" => {
-                        let _ = app.state::<AppState>().supervisor.restart();
-                    }
-                    "quit" => app.exit(0),
-                    _ => {}
-                })
-                .build(app)?;
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -160,10 +126,12 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building Codex WeChat desktop app");
 
-    app.run(|handle, event| {
-        if matches!(event, tauri::RunEvent::Exit) {
+    app.run(|handle, event| match event {
+        tauri::RunEvent::Reopen { .. } => show_usage_window(handle),
+        tauri::RunEvent::Exit => {
             handle.state::<AppState>().supervisor.shutdown();
         }
+        _ => {}
     });
 }
 

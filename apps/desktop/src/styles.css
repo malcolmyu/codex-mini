@@ -123,6 +123,13 @@ footer { margin-top: 26px; color: #8a948e; text-align: center; font-size: 10px; 
 .widget-login img { width: 146px; height: 146px; margin-top: 10px; border: 7px solid #fff; border-radius: 12px; }
 .widget-login button { margin-top: 15px; padding: 9px 13px; border-radius: 9px; color: #f3ffe8; background: #203c2c; font-size: 10px; font-weight: 750; }
 .widget-login small { margin-top: 7px; color: #9a3c33; font-size: 8px; }
+.widget-connection { display: grid; place-items: center; min-height: 210px; margin-top: 8px; padding: 22px; border: 1px solid #d9e1d8; border-radius: 12px; background: #ffffffb8; text-align: center; }
+.widget-connection-spinner { width: 28px; height: 28px; border: 3px solid #dce7dd; border-top-color: #4d8b5c; border-radius: 50%; animation: connection-spin .9s linear infinite; }
+.widget-connection > strong { margin-top: 12px; color: #2a382f; font-size: 12px; }
+.widget-connection > span:not(.widget-connection-spinner) { margin-top: 5px; color: #78857b; font-size: 9px; }
+.widget-connection button { margin-top: 14px; padding: 8px 13px; border-radius: 9px; color: #f3ffe8; background: #203c2c; font-size: 10px; font-weight: 750; }
+.widget-connection small { max-width: 280px; margin-top: 8px; overflow: hidden; color: #9a3c33; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+@keyframes connection-spin { to { transform: rotate(360deg); } }
 
 .mini-widget { display: grid; grid-template-columns: 50px minmax(0, 1fr) 22px; align-items: center; gap: 6px; width: 100vw; height: 100vh; padding: 7px 8px; overflow: hidden; border: 1px solid #d4ded6; border-radius: 999px; background: #f8faf6; box-shadow: inset 0 -1px 0 #cad6cc; cursor: grab; user-select: none; -webkit-user-select: none; }
 .mini-widget:active { cursor: grabbing; }
@@ -156,6 +163,8 @@ footer { margin-top: 26px; color: #8a948e; text-align: center; font-size: 10px; 
   .widget-heading i.online { box-shadow: 0 0 0 2px #23402d; }
   .widget-login { background: #1b261dcf; border-color: #304033; }
   .widget-login > strong { color: #e7eee9; }
+  .widget-connection { background: #1b261dcf; border-color: #304033; }
+  .widget-connection > strong { color: #e7eee9; }
   .main-shell { background: #111813; }
   .mini-widget { border-color: #314036; background: #18221d; box-shadow: inset 0 -1px 0 #0d130f; }
   .mini-rings::before, .mini-ring-inner::after { background: #18221d; }

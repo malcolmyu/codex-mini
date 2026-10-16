@@ -5,6 +5,7 @@ import { LogicalSize, PhysicalPosition } from '@tauri-apps/api/dpi';
 import QRCode from 'qrcode';
 import { useEffect, useState, type CSSProperties } from 'react';
 import { formatCompactReset } from './usage-format';
+import { resolveWeixinView } from './weixin-view';
 
 type ComponentStatus = 'disconnected' | 'connecting' | 'connected' | 'needs_login' | 'error';
 
@@ -127,6 +128,26 @@ function WidgetLogin({ status, onLogin, busy }: { status: BridgeStatus; onLogin:
   );
 }
 
+function WidgetConnection({
+  error,
+  onRetry,
+  busy,
+}: {
+  error?: string;
+  onRetry: () => void;
+  busy: boolean;
+}) {
+  return (
+    <div className="widget-connection">
+      <span className="widget-connection-spinner" aria-hidden="true" />
+      <strong>{error ? '微信连接暂时异常' : '正在自动连接微信'}</strong>
+      <span>{error ? '已保存登录，不需要重新扫码。' : '正在使用上次保存的登录信息…'}</span>
+      {error && <button type="button" onClick={onRetry} disabled={busy}>{busy ? '重试中…' : '重新连接'}</button>}
+      {error && <small>{error}</small>}
+    </div>
+  );
+}
+
 function UsageWidget({ status }: { status: BridgeStatus }) {
   const tasks = status.tasks?.candidates ?? [];
   const taskSignature = tasks.map((task) => task.sessionId).join(':');
@@ -135,8 +156,13 @@ function UsageWidget({ status }: { status: BridgeStatus }) {
   const [openingTask, setOpeningTask] = useState<string>();
   const [openError, setOpenError] = useState<string>();
   const [loginBusy, setLoginBusy] = useState(false);
+  const [retryBusy, setRetryBusy] = useState(false);
   const primary = Math.round(status.usage?.primary?.remainingPercent ?? 0);
   const secondary = Math.round(status.usage?.secondary?.remainingPercent ?? 0);
+  const weixinView = resolveWeixinView(status.weixin, status.weixinLogin?.state);
+  const weixinLabel = weixinView === 'connected' ? '已连接'
+    : weixinView === 'login' ? '需扫码'
+      : weixinView === 'connecting' ? '连接中' : '暂时异常';
 
   async function resizeWidget(nextCompact: boolean) {
     const window = getCurrentWindow();
@@ -181,6 +207,15 @@ function UsageWidget({ status }: { status: BridgeStatus }) {
       await invoke('start_weixin_login');
     } finally {
       setLoginBusy(false);
+    }
+  }
+
+  async function retryConnection() {
+    setRetryBusy(true);
+    try {
+      await invoke('restart_bridge');
+    } finally {
+      setRetryBusy(false);
     }
   }
 
@@ -255,7 +290,7 @@ function UsageWidget({ status }: { status: BridgeStatus }) {
           <span className="widget-mark">C</span>
           <span className="widget-heading" data-tauri-drag-region>
             <strong>Codex</strong>
-            <small data-tauri-drag-region><i className={status.weixin === 'connected' ? 'online' : ''} />微信{status.weixin === 'connected' ? '已连接' : '未连接'}</small>
+            <small data-tauri-drag-region><i className={weixinView === 'connected' ? 'online' : ''} />微信{weixinLabel}</small>
           </span>
         </div>
         <div className="widget-actions">
@@ -268,10 +303,10 @@ function UsageWidget({ status }: { status: BridgeStatus }) {
         <UsageMeter title="本周" value={status.usage?.secondary} />
       </div>
       <div className="widget-section-title">
-        <strong>{status.weixin === 'connected' ? '推荐关注的对话' : '微信连接'}</strong>
+        <strong>{weixinView === 'connected' ? '推荐关注的对话' : '微信连接'}</strong>
         <div className="widget-section-meta">
           <span>{status.tasks?.analyzing ? 'Codex 分析中…' : `${formatRelativeTime(status.tasks?.scannedAt)} · ${tasks.length} 项`}</span>
-          {status.weixin === 'connected' && tasks.length > 3 && (
+          {weixinView === 'connected' && tasks.length > 3 && (
             <button
               type="button"
               onClick={() => setTaskOffset((current) => current + 3 >= tasks.length ? 0 : current + 3)}
@@ -279,8 +314,14 @@ function UsageWidget({ status }: { status: BridgeStatus }) {
           )}
         </div>
       </div>
-      {status.weixin !== 'connected' ? (
+      {weixinView === 'login' ? (
         <WidgetLogin status={status} onLogin={() => void login()} busy={loginBusy} />
+      ) : weixinView !== 'connected' ? (
+        <WidgetConnection
+          error={weixinView === 'error' ? status.lastError ?? '连接失败，请重试。' : undefined}
+          onRetry={() => void retryConnection()}
+          busy={retryBusy}
+        />
       ) : (
         <div className="widget-task-list" aria-live="polite">
           {tasks.length === 0 ? (

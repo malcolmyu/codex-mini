@@ -81,28 +81,45 @@ footer { margin-top: 26px; color: #8a948e; text-align: center; font-size: 10px; 
 .widget-head { display: flex; align-items: center; justify-content: space-between; min-height: 52px; margin: -6px -4px 0; padding: 6px 4px 8px; cursor: grab; }
 .widget-head:active { cursor: grabbing; }
 .widget-head > div { display: flex; align-items: center; gap: 9px; font-size: 13px; }
+.widget-heading { display: grid; gap: 3px; }
+.widget-heading strong { line-height: 1; }
+.widget-heading small { display: flex; align-items: center; gap: 5px; color: #78847c; font-size: 8px; font-weight: 600; }
+.widget-heading i { width: 6px; height: 6px; border-radius: 50%; background: #d3685f; box-shadow: 0 0 0 2px #f4deda; }
+.widget-heading i.online { background: #3baa69; box-shadow: 0 0 0 2px #d9efdf; }
 .widget-actions { display: flex; gap: 6px; }
 .widget-mark { width: 28px; height: 28px; border-radius: 9px; font-size: 14px; }
 .icon-button { width: 26px; height: 26px; border-radius: 50%; color: #718078; background: #e2e7e0; font-size: 18px; line-height: 1; }
+.quit-button:hover { color: #8b3e37; background: #f4dedb; }
 .widget-usage { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; padding: 16px; border: 1px solid #dae2d9; border-radius: 15px; background: #ffffffd9; box-shadow: 0 10px 30px #24392a10; }
 .widget-usage .usage-label { display: block; }
 .widget-usage .usage-label span, .widget-usage .usage-label strong { display: block; }
 .widget-usage .usage-label strong { margin-top: 2px; font-size: 26px; }
 .widget-section-title { display: flex; align-items: center; justify-content: space-between; margin-top: 13px; padding: 0 3px; color: #26352b; font-size: 11px; }
 .widget-section-title span { color: #748078; font-size: 9px; }
-.widget-task-list { max-height: 208px; margin-top: 8px; overflow: auto; border: 1px solid #d9e1d8; border-radius: 12px; background: #ffffffb8; }
+.widget-task-list { max-height: 220px; margin-top: 8px; overflow: auto; border: 1px solid #d9e1d8; border-radius: 12px; background: #ffffffb8; }
 .widget-task-list ol { margin: 0; padding: 0; list-style: none; }
 .widget-task-list li { border-bottom: 1px solid #e6ebe5; }
 .widget-task-list li:last-child { border-bottom: 0; }
-.widget-task-list li > button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 10px 12px; color: inherit; text-align: left; background: transparent; }
+.widget-task-list li > button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 9px 11px 10px; color: inherit; text-align: left; background: transparent; }
 .widget-task-list li > button:hover, .widget-task-list li > button:focus-visible { background: #edf4ec; outline: none; }
 .widget-task-copy { min-width: 0; flex: 1; }
 .widget-task-list strong, .widget-task-list span { display: block; }
-.widget-task-list strong { overflow: hidden; color: #26352b; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.widget-task-list span { margin-top: 3px; color: #78857b; font-size: 8px; }
+.widget-task-list strong { display: -webkit-box; overflow: hidden; color: #26352b; font-size: 10px; line-height: 1.35; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.widget-task-list span { color: #78857b; font-size: 8px; }
+.widget-task-context { display: flex !important; align-items: center; justify-content: space-between; gap: 7px; min-height: 16px; margin: 0 0 3px; }
+.widget-task-context b { min-width: 0; overflow: hidden; padding: 3px 6px; border-radius: 6px; color: #345d41; background: #e2eee3; font-size: 7px; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
+.widget-task-context b.standalone { color: #68756d; background: #e9ece8; }
+.widget-task-context time { flex: 0 0 auto; color: #919b94; font-size: 7px; }
+.widget-task-reason { display: block; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .widget-task-list .widget-task-open { display: grid; flex: 0 0 auto; place-items: center; width: 22px; height: 22px; margin: 0; border-radius: 50%; color: #315f42; background: #e2eee3; font-size: 12px; font-weight: 800; }
 .widget-task-list > p { margin: 0; padding: 18px 12px; color: #78857b; font-size: 10px; text-align: center; }
 .widget-open-error { margin: 7px 2px 0; color: #9a3c33; font-size: 9px; }
+.widget-login { display: grid; place-items: center; min-height: 210px; margin-top: 8px; padding: 18px; border: 1px solid #d9e1d8; border-radius: 12px; background: #ffffffb8; text-align: center; }
+.widget-login > strong { color: #2a382f; font-size: 12px; }
+.widget-login > span { margin-top: 5px; color: #78857b; font-size: 9px; }
+.widget-login img { width: 146px; height: 146px; margin-top: 10px; border: 7px solid #fff; border-radius: 12px; }
+.widget-login button { margin-top: 15px; padding: 9px 13px; border-radius: 9px; color: #f3ffe8; background: #203c2c; font-size: 10px; font-weight: 750; }
+.widget-login small { margin-top: 7px; color: #9a3c33; font-size: 8px; }
 
 .mini-widget { display: grid; grid-template-columns: 50px minmax(0, 1fr) 22px; align-items: center; gap: 6px; width: 100vw; height: 100vh; padding: 7px 8px; overflow: hidden; border: 1px solid #d4ded6; border-radius: 999px; background: #f8faf6; box-shadow: inset 0 -1px 0 #cad6cc; cursor: grab; user-select: none; -webkit-user-select: none; }
 .mini-widget:active { cursor: grabbing; }
@@ -131,6 +148,10 @@ footer { margin-top: 26px; color: #8a948e; text-align: center; font-size: 10px; 
   .widget-task-list li { border-color: #2a382e; }
   .widget-task-list li > button:hover, .widget-task-list li > button:focus-visible { background: #26342a; }
   .widget-task-list strong { color: #e7eee9; }
+  .widget-task-context b { color: #b9dfc4; background: #294032; }
+  .widget-heading i.online { box-shadow: 0 0 0 2px #23402d; }
+  .widget-login { background: #1b261dcf; border-color: #304033; }
+  .widget-login > strong { color: #e7eee9; }
   .main-shell { background: #111813; }
   .mini-widget { border-color: #314036; background: #18221d; box-shadow: inset 0 -1px 0 #0d130f; }
   .mini-rings::before, .mini-ring-inner::after { background: #18221d; }

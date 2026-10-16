@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { extractWeixinText, WeixinApi, type WeixinCredentials } from '../src/weixin/api.js';
+import {
+  extractWeixinText,
+  WEIXIN_LOGIN_POLL_TIMEOUT_MS,
+  WeixinApi,
+  type WeixinCredentials,
+} from '../src/weixin/api.js';
 
 const credentials: WeixinCredentials = {
   token: 'secret',
@@ -9,6 +14,10 @@ const credentials: WeixinCredentials = {
 };
 
 describe('WeixinApi', () => {
+  it('uses a short timeout for QR login polling', () => {
+    expect(WEIXIN_LOGIN_POLL_TIMEOUT_MS).toBe(5_000);
+  });
+
   it('builds the iLink text message request', async () => {
     const fetchMock = vi.fn(async (_url: URL, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body));

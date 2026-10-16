@@ -12,20 +12,10 @@
   "app": {
     "windows": [
       {
-        "label": "main",
-        "title": "Codex 微信桥",
-        "width": 680,
-        "height": 560,
-        "minWidth": 520,
-        "minHeight": 500,
-        "resizable": true,
-        "center": true
-      },
-      {
         "label": "usage",
         "title": "Codex 剩余用量",
         "width": 360,
-        "height": 320,
+        "height": 440,
         "minWidth": 160,
         "minHeight": 60,
         "resizable": false,

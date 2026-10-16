@@ -15,16 +15,25 @@ describe('CodexTaskScanner', () => {
     const statePath = join(directory, 'state.sqlite');
     const historyPath = join(directory, 'history.sqlite');
     const state = new DatabaseSync(statePath);
-    state.exec('CREATE TABLE threads (id TEXT PRIMARY KEY, title TEXT, cwd TEXT, updated_at INTEGER, updated_at_ms INTEGER, archived INTEGER)');
+    state.exec(`
+      CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT);
+      CREATE TABLE threads (
+        id TEXT PRIMARY KEY, title TEXT, cwd TEXT, project_id TEXT,
+        git_branch TEXT, git_origin_url TEXT, updated_at INTEGER,
+        updated_at_ms INTEGER, archived INTEGER
+      )
+    `);
+    state.prepare('INSERT INTO projects VALUES (?, ?)').run('project-a', '增长平台');
     const now = new Date('2026-10-12T12:00:00.000Z');
     const recent = now.getTime() - 60 * 60 * 1_000;
-    const insertThread = state.prepare('INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?)');
-    insertThread.run('failed', '修复失败任务', '/work/a', Math.floor(recent / 1_000), recent, 0);
-    insertThread.run('interrupted', '继续中断任务', '/work/b', Math.floor(recent / 1_000), recent, 0);
-    insertThread.run('question', '回答设计问题', '/work/c', Math.floor(recent / 1_000), recent, 0);
+    const insertThread = state.prepare('INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    insertThread.run('failed', '修复失败任务', '/work/a', 'project-a', 'main', null, Math.floor(recent / 1_000), recent, 0);
+    insertThread.run('interrupted', '继续中断任务', '/work/b', null, 'feature/b', 'git@example.com:team/project-b.git', Math.floor(recent / 1_000), recent, 0);
+    insertThread.run('question', '回答设计问题', '/work/c', null, null, null, Math.floor(recent / 1_000), recent, 0);
+    insertThread.run('today', '整理今天的讨论', '/notes/today', null, null, null, Math.floor(recent / 1_000), recent, 0);
     const activeAt = now.getTime() - 10 * 60 * 1_000;
-    insertThread.run('active', '正在执行', '/work/d', Math.floor(activeAt / 1_000), activeAt, 0);
-    insertThread.run('archived', '已归档', '/work/e', Math.floor(recent / 1_000), recent, 1);
+    insertThread.run('active', '正在执行', '/work/d', null, null, null, Math.floor(activeAt / 1_000), activeAt, 0);
+    insertThread.run('archived', '已归档', '/work/e', null, null, null, Math.floor(recent / 1_000), recent, 1);
     state.close();
 
     const history = new DatabaseSync(historyPath);
@@ -34,6 +43,7 @@ describe('CodexTaskScanner', () => {
     insertTurn.run('failed', 'turn-f', 'failed', 1, 2);
     insertTurn.run('interrupted', 'turn-i', 'interrupted', 1, 2);
     insertTurn.run('question', 'turn-q', 'completed', 1, 2);
+    insertTurn.run('today', 'turn-t', 'completed', 1, 2);
     insertTurn.run('active', 'turn-a', 'inProgress', 1, null);
     insertTurn.run('archived', 'turn-r', 'failed', 1, 2);
     history.prepare('INSERT INTO thread_items VALUES (?, ?, ?, ?, ?)')
@@ -41,8 +51,11 @@ describe('CodexTaskScanner', () => {
     history.close();
 
     const result = new CodexTaskScanner({ statePath, historyPath, now: () => now }).scan();
-    expect(result.candidates.map((task) => task.sessionId)).toEqual(['failed', 'interrupted', 'question']);
-    expect(result.candidates[0].score).toBe(65);
+    expect(result.candidates.map((task) => task.sessionId)).toEqual(['failed', 'interrupted', 'question', 'today']);
+    expect(result.candidates[0].score).toBe(140);
+    expect(result.candidates[0]).toMatchObject({ projectName: '增长平台', gitBranch: 'main' });
+    expect(result.candidates[1]).toMatchObject({ projectName: 'project-b', gitBranch: 'feature/b' });
     expect(result.candidates[2].reasons).toContain('Codex 正在等待你的回答');
+    expect(result.candidates[3].reasons).toContain('今天有更新');
   });
 });

@@ -3,6 +3,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 export const WEIXIN_QR_BASE_URL = 'https://ilinkai.weixin.qq.com/';
 const PROTOCOL_VERSION = '2.4.6';
 const CLIENT_VERSION = (2 << 16) | (4 << 8) | 6;
+export const WEIXIN_LOGIN_POLL_TIMEOUT_MS = 5_000;
 
 export interface WeixinCredentials {
   token: string;
@@ -98,7 +99,7 @@ export class WeixinApi {
       this.fetchImpl,
       WEIXIN_QR_BASE_URL,
       `ilink/bot/get_qrcode_status?qrcode=${encodeURIComponent(qrcode)}`,
-      { method: 'GET', signal },
+      { method: 'GET', signal, timeoutMs: WEIXIN_LOGIN_POLL_TIMEOUT_MS },
     );
   }
 

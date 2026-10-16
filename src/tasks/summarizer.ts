@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
@@ -21,6 +22,8 @@ interface AnalysisResponse {
 
 interface CacheEntry extends Analysis {
   updatedAt: string;
+  excerptHash?: string;
+  summarizedAt?: string;
 }
 
 interface SummaryCache {
@@ -32,6 +35,8 @@ interface ConversationExcerpt {
   sessionId: string;
   title: string;
   cwd: string;
+  projectName?: string;
+  gitBranch?: string;
   updatedAt: string;
   status: string;
   localReasons: string[];
@@ -45,7 +50,13 @@ export interface CodexTaskSummarizerOptions {
   model?: string;
   timeoutMs?: number;
   maxCandidates?: number;
+  now?: () => Date;
   analyze?: (conversations: ConversationExcerpt[]) => Promise<AnalysisResponse>;
+}
+
+export interface SummarizeRunOptions {
+  allowAnalysis?: boolean;
+  onAnalyzeStart?: () => void;
 }
 
 function messageText(itemType: string, itemJson: string): string | null {
@@ -80,6 +91,17 @@ function uniqueCandidates(tasks: PendingTask[], limit: number): PendingTask[] {
   }).slice(0, limit);
 }
 
+function conversationHash(conversation: ConversationExcerpt): string {
+  return createHash('sha256').update(JSON.stringify({
+    title: conversation.title,
+    projectName: conversation.projectName,
+    gitBranch: conversation.gitBranch,
+    status: conversation.status,
+    localReasons: conversation.localReasons,
+    messages: conversation.messages,
+  })).digest('hex');
+}
+
 async function loadCache(path: string): Promise<SummaryCache> {
   try {
     const parsed = JSON.parse(await readFile(path, 'utf8')) as SummaryCache;
@@ -99,25 +121,73 @@ async function saveCache(path: string, cache: SummaryCache): Promise<void> {
 export class CodexTaskSummarizer {
   constructor(private readonly options: CodexTaskSummarizerOptions = {}) {}
 
-  async summarize(tasks: PendingTask[]): Promise<PendingTask[]> {
+  async summarize(tasks: PendingTask[], runOptions: SummarizeRunOptions = {}): Promise<PendingTask[]> {
     const candidates = uniqueCandidates(tasks, this.options.maxCandidates ?? 8);
     if (candidates.length === 0) return [];
     const cachePath = this.options.cachePath ?? join(homedir(), '.codex', 'codex-wechat-summary-cache.json');
     const cache = await loadCache(cachePath);
-    const missing = candidates.filter((task) => cache.entries[task.sessionId]?.updatedAt !== task.updatedAt);
-    if (missing.length > 0) {
-      const conversations = this.readExcerpts(missing);
-      const response = await (this.options.analyze?.(conversations) ?? this.analyzeWithCodex(conversations));
+    const conversations = this.readExcerpts(candidates);
+    const conversationBySession = new Map(conversations.map((conversation) => [conversation.sessionId, conversation]));
+    const now = this.options.now?.() ?? new Date();
+    let cacheChanged = false;
+    const missing = candidates.filter((task) => {
+      const conversation = conversationBySession.get(task.sessionId);
+      if (!conversation) return false;
+      const hash = conversationHash(conversation);
+      const entry = cache.entries[task.sessionId];
+      if (!entry) return true;
+      if (!entry.excerptHash && entry.updatedAt === task.updatedAt) {
+        entry.excerptHash = hash;
+        entry.summarizedAt = now.toISOString();
+        cacheChanged = true;
+        return false;
+      }
+      if (entry.excerptHash === hash) {
+        if (entry.updatedAt !== task.updatedAt) {
+          entry.updatedAt = task.updatedAt;
+          cacheChanged = true;
+        }
+        return false;
+      }
+      return true;
+    });
+    const allowAnalysis = runOptions.allowAnalysis ?? true;
+    if (missing.length > 0 && allowAnalysis) {
+      runOptions.onAnalyzeStart?.();
+      const missingConversations = missing.flatMap((task) => {
+        const conversation = conversationBySession.get(task.sessionId);
+        return conversation ? [conversation] : [];
+      });
+      const response = await (this.options.analyze?.(missingConversations) ?? this.analyzeWithCodex(missingConversations));
       for (const item of response.items) {
         const task = missing.find((candidate) => candidate.sessionId === item.sessionId);
-        if (!task) continue;
+        const conversation = conversationBySession.get(item.sessionId);
+        if (!task || !conversation) continue;
         cache.entries[item.sessionId] = {
           ...item,
           relevanceScore: Math.max(0, Math.min(100, Math.round(item.relevanceScore))),
           updatedAt: task.updatedAt,
+          excerptHash: conversationHash(conversation),
+          summarizedAt: now.toISOString(),
         };
+        cacheChanged = true;
       }
-      await saveCache(cachePath, cache);
+    }
+    if (cacheChanged) await saveCache(cachePath, cache);
+
+    if (!allowAnalysis) {
+      const missingSessions = new Set(missing.map((task) => task.sessionId));
+      return candidates.flatMap((task) => {
+        if (missingSessions.has(task.sessionId)) return [task];
+        const analysis = cache.entries[task.sessionId];
+        if (!analysis?.worthContinuing || analysis.relevanceScore < 65) return [];
+        return [{
+          ...task,
+          summary: analysis.summary,
+          recommendationReason: analysis.recommendationReason,
+          relevanceScore: analysis.relevanceScore,
+        }];
+      }).slice(0, 6);
     }
 
     return candidates
@@ -159,6 +229,8 @@ export class CodexTaskSummarizer {
           sessionId: task.sessionId,
           title: task.title,
           cwd: task.cwd,
+          projectName: task.projectName,
+          gitBranch: task.gitBranch,
           updatedAt: task.updatedAt,
           status: task.status,
           localReasons: task.reasons,
@@ -202,6 +274,7 @@ export class CodexTaskSummarizer {
       '你是 Codex 会话整理器。只分析给出的会话摘录，不调用工具，不继续执行原任务。',
       '请为每个会话写一句不超过 45 个汉字的现状摘要，并判断它现在是否值得用户继续关注。',
       '只有近期、目标具体、尚未真正解决且继续推进有明显价值的会话才给高分。',
+      '今天有更新的高价值讨论可以推荐，即使上一轮正常结束；项目会话和独立对话必须同等判断，不得因没有项目而降分。',
       '已经基本回答、仅因技术状态被标记中断、陈旧、重复、宽泛探索或没有明确下一步的会话应低于 65 分。',
       'recommendationReason 用一句不超过 30 个汉字的话解释为什么值得继续或为什么不值得。',
       `当前时间：${new Date().toISOString()}`,

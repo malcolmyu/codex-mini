@@ -14,6 +14,11 @@ import { WeixinApi } from './weixin/api.js';
 import { loadCredentials, saveCredentials, WeixinChannel } from './weixin/channel.js';
 
 type StatusListener = (status: BridgeStatus) => void;
+export const WEIXIN_LOGIN_POLL_INTERVAL_MS = 400;
+
+function canAnalyzeTasks(usage: UsageSnapshot | undefined): boolean {
+  return Boolean(usage && !usage.stale && usage.primary && usage.primary.remainingPercent > 0);
+}
 
 export interface BridgeRuntimeOptions {
   projectRoot: string;
@@ -217,15 +222,22 @@ export class BridgeRuntime {
     try {
       tasks = this.taskScanner.scan();
       if (tasks.candidates.length > 0) {
-        this.update({
-          ...this.status,
-          usage,
-          tasks: { candidates: [], scannedAt: tasks.scannedAt, analyzing: true },
-          updatedAt: new Date().toISOString(),
-        });
+        const scannedAt = tasks.scannedAt;
         tasks = {
           ...tasks,
-          candidates: await this.taskSummarizer.summarize(tasks.candidates),
+          candidates: await this.taskSummarizer.summarize(tasks.candidates, {
+            allowAnalysis: canAnalyzeTasks(usage),
+            onAnalyzeStart: () => this.update({
+              ...this.status,
+              usage,
+              tasks: {
+                candidates: this.status.tasks?.candidates ?? [],
+                scannedAt,
+                analyzing: true,
+              },
+              updatedAt: new Date().toISOString(),
+            }),
+          }),
           analyzing: false,
         };
       }
@@ -247,7 +259,7 @@ export class BridgeRuntime {
         '',
         ...selected.map(
           (task, index) =>
-            `${index + 1}. ${task.summary ?? task.title}\n   ${task.recommendationReason ?? task.reasons.join('、')}`,
+            `${index + 1}. ${task.projectName ? `[${task.projectName}] ` : ''}${task.summary ?? task.title}\n   ${task.recommendationReason ?? task.reasons.join('、')}`,
         ),
         '',
         '回复序号继续任务，例如：1',
@@ -315,7 +327,7 @@ export class BridgeRuntime {
         if (['need_verifycode', 'verify_code_blocked'].includes(state)) {
           throw new Error('本次登录需要验证码，请重新生成二维码');
         }
-        await new Promise((done) => setTimeout(done, 1_000));
+        await new Promise((done) => setTimeout(done, WEIXIN_LOGIN_POLL_INTERVAL_MS));
       }
     } catch (error) {
       if (!controller.signal.aborted) {

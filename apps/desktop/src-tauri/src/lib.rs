@@ -78,11 +78,9 @@ fn set_autostart(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
     .map_err(|error| error.to_string())
 }
 
-fn show_main_window(app: &tauri::AppHandle) {
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.show();
-        let _ = window.set_focus();
-    }
+#[tauri::command]
+fn quit_app(app: tauri::AppHandle) {
+    app.exit(0);
 }
 
 fn show_usage_window(app: &tauri::AppHandle) {
@@ -96,7 +94,7 @@ fn show_usage_window(app: &tauri::AppHandle) {
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
-            show_main_window(app);
+            show_usage_window(app);
         }))
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
@@ -110,8 +108,12 @@ pub fn run() {
             open_codex_thread,
             get_autostart,
             set_autostart,
+            quit_app,
         ])
         .setup(|app| {
+            #[cfg(target_os = "macos")]
+            app.handle()
+                .set_activation_policy(tauri::ActivationPolicy::Accessory)?;
             let status = Arc::new(Mutex::new(BridgeStatus::default()));
             let supervisor = SupervisorHandle::spawn(app.handle().clone(), status.clone());
             app.manage(AppState { status, supervisor });

@@ -14,6 +14,10 @@ interface ThreadRow {
   id: string;
   title: string;
   cwd: string;
+  project_id: string | null;
+  project_name: string | null;
+  git_branch: string | null;
+  git_origin_url: string | null;
   updated_at: number;
   updated_at_ms: number | null;
 }
@@ -49,6 +53,15 @@ function compactTitle(value: string): string {
   return title.length > 80 ? `${title.slice(0, 79)}…` : title;
 }
 
+function repositoryName(origin: string | null): string | undefined {
+  if (!origin) return undefined;
+  const normalized = origin.replace(/\/+$/u, '');
+  const name = normalized.slice(Math.max(normalized.lastIndexOf('/'), normalized.lastIndexOf(':')) + 1)
+    .replace(/\.git$/u, '')
+    .trim();
+  return name || undefined;
+}
+
 export class CodexTaskScanner {
   constructor(private readonly options: TaskScannerOptions = {}) {}
 
@@ -59,13 +72,18 @@ export class CodexTaskScanner {
     const history = new DatabaseSync(this.options.historyPath ?? join(codexHome, '.codex', 'thread_history_1.sqlite'), { readOnly: true });
     try {
       const cutoff = now.getTime() - 14 * 24 * 60 * 60 * 1_000;
+      const startOfToday = new Date(now);
+      startOfToday.setHours(0, 0, 0, 0);
       const threads = state.prepare(`
-        SELECT id, title, cwd, updated_at, updated_at_ms
+        SELECT threads.id, threads.title, threads.cwd, threads.project_id,
+          projects.name AS project_name, threads.git_branch, threads.git_origin_url,
+          threads.updated_at, threads.updated_at_ms
         FROM threads
-        WHERE archived = 0
-          AND title NOT LIKE 'Automation:%'
-          AND COALESCE(updated_at_ms, updated_at * 1000) >= ?
-        ORDER BY COALESCE(updated_at_ms, updated_at * 1000) DESC
+        LEFT JOIN projects ON projects.id = threads.project_id
+        WHERE threads.archived = 0
+          AND threads.title NOT LIKE 'Automation:%'
+          AND COALESCE(threads.updated_at_ms, threads.updated_at * 1000) >= ?
+        ORDER BY COALESCE(threads.updated_at_ms, threads.updated_at * 1000) DESC
       `).all(cutoff) as unknown as ThreadRow[];
       const latestTurn = history.prepare(`
         SELECT turn_id, status, started_at, completed_at
@@ -106,6 +124,7 @@ export class CodexTaskScanner {
         if (turn.status === 'inProgress') { score += 40; reasons.push('任务长时间未继续'); }
         if (waitingForAnswer) { score += 45; reasons.push('Codex 正在等待你的回答'); }
         if (lastUser > lastAgent) { score += 50; reasons.push('最后一条用户消息尚未得到回复'); }
+        if (updatedMs >= startOfToday.getTime()) { score += 75; reasons.push('今天有更新'); }
         if (ageMs <= 7 * 24 * 60 * 60 * 1_000) score += 15;
         else score += 5;
         if (score < 45) continue;
@@ -113,6 +132,8 @@ export class CodexTaskScanner {
           sessionId: thread.id,
           title: compactTitle(thread.title),
           cwd: thread.cwd,
+          projectName: thread.project_name?.trim() || repositoryName(thread.git_origin_url),
+          gitBranch: thread.git_branch?.trim() || undefined,
           updatedAt: new Date(updatedMs).toISOString(),
           status: turn.status,
           score,

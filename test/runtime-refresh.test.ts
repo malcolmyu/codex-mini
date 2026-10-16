@@ -2,9 +2,10 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { UsageSnapshot } from '../src/ipc/protocol.js';
-import { BridgeRuntime } from '../src/runtime.js';
+import type { PendingTask, UsageSnapshot } from '../src/ipc/protocol.js';
+import { BridgeRuntime, WEIXIN_LOGIN_POLL_INTERVAL_MS } from '../src/runtime.js';
 import { CodexTaskScanner } from '../src/tasks/scanner.js';
+import { CodexTaskSummarizer } from '../src/tasks/summarizer.js';
 import { CodexUsageProbe } from '../src/usage/probe.js';
 
 const directories: string[] = [];
@@ -20,7 +21,26 @@ function usage(): UsageSnapshot {
   };
 }
 
+function exhaustedUsage(): UsageSnapshot {
+  return {
+    primary: {
+      usedPercent: 100,
+      remainingPercent: 0,
+      windowDurationMins: 300,
+      resetsAt: 1_800_000_000,
+    },
+    secondary: null,
+    planType: 'plus',
+    updatedAt: new Date().toISOString(),
+    stale: false,
+  };
+}
+
 describe('BridgeRuntime insight refresh', () => {
+  it('polls QR login status without a one-second delay', () => {
+    expect(WEIXIN_LOGIN_POLL_INTERVAL_MS).toBe(400);
+  });
+
   it('runs one task-only follow-up when a database change arrives during a usage refresh', async () => {
     const projectRoot = await mkdtemp(join(tmpdir(), 'codex-runtime-refresh-'));
     directories.push(projectRoot);
@@ -50,5 +70,43 @@ describe('BridgeRuntime insight refresh', () => {
 
     expect(read).toHaveBeenCalledTimes(1);
     expect(scan).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not enter the analyzing state when the five-hour quota is exhausted', async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), 'codex-runtime-refresh-'));
+    directories.push(projectRoot);
+    const usageProbe = new CodexUsageProbe();
+    vi.spyOn(usageProbe, 'read').mockResolvedValue(exhaustedUsage());
+    const task: PendingTask = {
+      sessionId: 'thread-local-12345678901234567890',
+      title: '今天完成的独立讨论',
+      cwd: projectRoot,
+      updatedAt: '2026-10-15T12:00:00.000Z',
+      status: 'completed',
+      score: 90,
+      reasons: ['今天有更新'],
+    };
+    const taskScanner = new CodexTaskScanner();
+    vi.spyOn(taskScanner, 'scan').mockReturnValue({
+      candidates: [task],
+      scannedAt: '2026-10-15T13:00:00.000Z',
+    });
+    const taskSummarizer = new CodexTaskSummarizer();
+    const summarize = vi.spyOn(taskSummarizer, 'summarize').mockResolvedValue([task]);
+    const runtime = new BridgeRuntime({
+      projectRoot,
+      defaultCwd: projectRoot,
+      usageProbe,
+      taskScanner,
+      taskSummarizer,
+    });
+    const updates: boolean[] = [];
+    runtime.onStatus((status) => updates.push(Boolean(status.tasks?.analyzing)));
+
+    await runtime.refreshInsights();
+
+    expect(summarize).toHaveBeenCalledWith([task], expect.objectContaining({ allowAnalysis: false }));
+    expect(updates).not.toContain(true);
+    expect(runtime.currentStatus().tasks?.candidates).toEqual([task]);
   });
 });

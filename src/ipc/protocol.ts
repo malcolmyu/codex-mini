@@ -22,6 +22,8 @@ export interface PendingTask {
   sessionId: string;
   title: string;
   cwd: string;
+  projectName?: string;
+  gitBranch?: string;
   updatedAt: string;
   status: string;
   score: number;

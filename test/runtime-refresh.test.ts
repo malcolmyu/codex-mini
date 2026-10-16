@@ -36,6 +36,21 @@ function exhaustedUsage(): UsageSnapshot {
   };
 }
 
+function reminderReadyUsage(): UsageSnapshot {
+  return {
+    primary: {
+      usedPercent: 45,
+      remainingPercent: 55,
+      windowDurationMins: 300,
+      resetsAt: Math.floor(Date.now() / 1_000) + 60 * 60,
+    },
+    secondary: null,
+    planType: 'plus',
+    updatedAt: new Date().toISOString(),
+    stale: false,
+  };
+}
+
 describe('BridgeRuntime insight refresh', () => {
   it('polls QR login status without a one-second delay', () => {
     expect(WEIXIN_LOGIN_POLL_INTERVAL_MS).toBe(400);
@@ -108,5 +123,41 @@ describe('BridgeRuntime insight refresh', () => {
     expect(summarize).toHaveBeenCalledWith([task], expect.objectContaining({ allowAnalysis: false }));
     expect(updates).not.toContain(true);
     expect(runtime.currentStatus().tasks?.candidates).toEqual([task]);
+  });
+
+  it('does not use display-only alternatives for WeChat reminders', async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), 'codex-runtime-refresh-'));
+    directories.push(projectRoot);
+    const usageProbe = new CodexUsageProbe();
+    vi.spyOn(usageProbe, 'read').mockResolvedValue(reminderReadyUsage());
+    const task: PendingTask = {
+      sessionId: 'thread-display-only-1234567890123456',
+      title: '今天的独立讨论',
+      cwd: projectRoot,
+      updatedAt: new Date().toISOString(),
+      status: 'completed',
+      score: 90,
+      reasons: ['今天有更新'],
+      reminderEligible: false,
+    };
+    const taskScanner = new CodexTaskScanner();
+    vi.spyOn(taskScanner, 'scan').mockReturnValue({ candidates: [task], scannedAt: new Date().toISOString() });
+    const taskSummarizer = new CodexTaskSummarizer();
+    vi.spyOn(taskSummarizer, 'summarize').mockResolvedValue([task]);
+    const runtime = new BridgeRuntime({
+      projectRoot,
+      defaultCwd: projectRoot,
+      usageProbe,
+      taskScanner,
+      taskSummarizer,
+    });
+
+    await runtime.refreshInsights();
+
+    expect(runtime.currentStatus().tasks?.candidates).toEqual([task]);
+    expect(runtime.currentStatus().reminder).toMatchObject({
+      eligible: false,
+      reason: '没有达到提醒阈值的未完成任务',
+    });
   });
 });

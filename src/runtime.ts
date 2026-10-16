@@ -249,7 +249,9 @@ export class BridgeRuntime {
         error: error instanceof Error ? error.message : String(error),
       };
     }
-    const candidatesForReminder = await this.reminderStore.filter(tasks.candidates);
+    const candidatesForReminder = await this.reminderStore.filter(
+      tasks.candidates.filter((task) => task.reminderEligible !== false),
+    );
     const context = await this.reminderStore.deliveryContext();
     let reminder = evaluateReminder(usage, candidatesForReminder, context);
     if (reminder.eligible && this.channel && this.status.weixin === 'connected') {

@@ -28,6 +28,7 @@ interface PendingTask {
   summary?: string;
   recommendationReason?: string;
   relevanceScore?: number;
+  reminderEligible?: boolean;
 }
 
 interface BridgeStatus {
@@ -128,7 +129,9 @@ function WidgetLogin({ status, onLogin, busy }: { status: BridgeStatus; onLogin:
 
 function UsageWidget({ status }: { status: BridgeStatus }) {
   const tasks = status.tasks?.candidates ?? [];
+  const taskSignature = tasks.map((task) => task.sessionId).join(':');
   const [compact, setCompact] = useState(() => localStorage.getItem('usage-widget-compact') === 'true');
+  const [taskOffset, setTaskOffset] = useState(0);
   const [openingTask, setOpeningTask] = useState<string>();
   const [openError, setOpenError] = useState<string>();
   const [loginBusy, setLoginBusy] = useState(false);
@@ -218,6 +221,10 @@ function UsageWidget({ status }: { status: BridgeStatus }) {
     };
   }, [compact]);
 
+  useEffect(() => setTaskOffset(0), [taskSignature]);
+
+  const visibleTasks = tasks.slice(taskOffset, taskOffset + 3);
+
   if (compact) {
     return (
       <main className="mini-widget" data-tauri-drag-region>
@@ -262,7 +269,15 @@ function UsageWidget({ status }: { status: BridgeStatus }) {
       </div>
       <div className="widget-section-title">
         <strong>{status.weixin === 'connected' ? '推荐关注的对话' : '微信连接'}</strong>
-        <span>{status.tasks?.analyzing ? 'Codex 分析中…' : `${formatRelativeTime(status.tasks?.scannedAt)} · ${tasks.length} 项`}</span>
+        <div className="widget-section-meta">
+          <span>{status.tasks?.analyzing ? 'Codex 分析中…' : `${formatRelativeTime(status.tasks?.scannedAt)} · ${tasks.length} 项`}</span>
+          {status.weixin === 'connected' && tasks.length > 3 && (
+            <button
+              type="button"
+              onClick={() => setTaskOffset((current) => current + 3 >= tasks.length ? 0 : current + 3)}
+            >换一换</button>
+          )}
+        </div>
       </div>
       {status.weixin !== 'connected' ? (
         <WidgetLogin status={status} onLogin={() => void login()} busy={loginBusy} />
@@ -271,7 +286,7 @@ function UsageWidget({ status }: { status: BridgeStatus }) {
           {tasks.length === 0 ? (
             <p>{status.tasks?.error ?? (status.tasks?.analyzing ? 'Codex 正在整理最近的会话…' : '暂时没有值得继续关注的对话。')}</p>
           ) : (
-            <ol>{tasks.slice(0, 5).map((task) => (
+            <ol>{visibleTasks.map((task) => (
               <li key={task.sessionId}>
                 <button
                   type="button"

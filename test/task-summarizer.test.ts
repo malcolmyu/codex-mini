@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { PendingTask } from '../src/ipc/protocol.js';
-import { CodexTaskSummarizer } from '../src/tasks/summarizer.js';
+import { CodexTaskSummarizer, recencyWeight } from '../src/tasks/summarizer.js';
 
 const directories: string[] = [];
 afterEach(async () => {
@@ -12,6 +12,14 @@ afterEach(async () => {
 });
 
 describe('Codex task summarizer', () => {
+  it('gives recent conversations a bounded ranking weight', () => {
+    const now = new Date('2026-10-16T12:00:00.000Z');
+    expect(recencyWeight('2026-10-16T00:00:00.000Z', now)).toBe(30);
+    expect(recencyWeight('2026-10-14T12:00:00.000Z', now)).toBe(18);
+    expect(recencyWeight('2026-10-10T12:00:00.000Z', now)).toBe(8);
+    expect(recencyWeight('2026-10-01T12:00:00.000Z', now)).toBe(0);
+  });
+
   it('uses Codex analysis, filters low-value work and caches unchanged sessions', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'codex-task-summary-'));
     directories.push(directory);
@@ -165,8 +173,61 @@ describe('Codex task summarizer', () => {
       },
     });
 
-    expect(await summarizer.summarize(tasks)).toHaveLength(6);
+    expect(await summarizer.summarize(tasks)).toHaveLength(8);
     expect(analyzed).toBe(8);
+  });
+
+  it('keeps a recent independent conversation as a display-only alternative', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'codex-task-summary-'));
+    directories.push(directory);
+    const historyPath = join(directory, 'history.sqlite');
+    const database = new DatabaseSync(historyPath);
+    database.exec(`
+      CREATE TABLE thread_items (
+        thread_id TEXT, turn_id TEXT, item_id TEXT, rollout_ordinal INTEGER,
+        item_json TEXT, item_type TEXT
+      )
+    `);
+    const tasks: PendingTask[] = [
+      {
+        sessionId: 'thread-project-12345678901234567890', title: '旧项目未完成', cwd: directory,
+        projectName: 'project', updatedAt: '2026-10-08T12:00:00.000Z', status: 'interrupted',
+        score: 100, reasons: ['上一轮被中断'],
+      },
+      {
+        sessionId: 'thread-independent-1234567890123456', title: '今天的独立讨论', cwd: directory,
+        updatedAt: '2026-10-16T08:00:00.000Z', status: 'completed', score: 90, reasons: ['今天有更新'],
+      },
+    ];
+    const summarizer = new CodexTaskSummarizer({
+      historyPath,
+      cachePath: join(directory, 'cache.json'),
+      now: () => new Date('2026-10-16T12:00:00.000Z'),
+      analyze: async (conversations) => ({
+        items: conversations.map((conversation) => conversation.sessionId === tasks[0]?.sessionId ? {
+          sessionId: conversation.sessionId,
+          summary: '项目仍需收尾',
+          recommendationReason: '尚未完成',
+          relevanceScore: 80,
+          worthContinuing: true,
+        } : {
+          sessionId: conversation.sessionId,
+          summary: '今天讨论过的新方向',
+          recommendationReason: '最近更新，可换一换查看',
+          relevanceScore: 24,
+          worthContinuing: false,
+        }),
+      }),
+    });
+
+    const result = await summarizer.summarize(tasks);
+
+    expect(result).toHaveLength(2);
+    expect(result[1]).toMatchObject({
+      sessionId: tasks[1]?.sessionId,
+      reminderEligible: false,
+    });
+    expect(result[1]?.projectName).toBeUndefined();
   });
 
   it('uses local candidates without calling Codex when analysis is disabled', async () => {
@@ -203,6 +264,6 @@ describe('Codex task summarizer', () => {
     const result = await summarizer.summarize([task], { allowAnalysis: false });
 
     expect(calls).toBe(0);
-    expect(result).toEqual([task]);
+    expect(result).toEqual([{ ...task, reminderEligible: false }]);
   });
 });

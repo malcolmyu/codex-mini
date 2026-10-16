@@ -96,6 +96,9 @@ footer { margin-top: 26px; color: #8a948e; text-align: center; font-size: 10px; 
 .widget-usage .usage-label strong { margin-top: 2px; font-size: 26px; }
 .widget-section-title { display: flex; align-items: center; justify-content: space-between; margin-top: 13px; padding: 0 3px; color: #26352b; font-size: 11px; }
 .widget-section-title span { color: #748078; font-size: 9px; }
+.widget-section-meta { display: flex; align-items: center; gap: 7px; }
+.widget-section-meta button { padding: 3px 7px; border: 1px solid #cbd8cd; border-radius: 99px; color: #3f674a; background: #f7faf6; font-size: 8px; font-weight: 750; }
+.widget-section-meta button:hover, .widget-section-meta button:focus-visible { border-color: #8daf95; background: #e8f2e8; outline: none; }
 .widget-task-list { max-height: 220px; margin-top: 8px; overflow: auto; border: 1px solid #d9e1d8; border-radius: 12px; background: #ffffffb8; }
 .widget-task-list ol { margin: 0; padding: 0; list-style: none; }
 .widget-task-list li { border-bottom: 1px solid #e6ebe5; }
@@ -149,6 +152,7 @@ footer { margin-top: 26px; color: #8a948e; text-align: center; font-size: 10px; 
   .widget-task-list li > button:hover, .widget-task-list li > button:focus-visible { background: #26342a; }
   .widget-task-list strong { color: #e7eee9; }
   .widget-task-context b { color: #b9dfc4; background: #294032; }
+  .widget-section-meta button { color: #b9dfc4; background: #203027; border-color: #3a5140; }
   .widget-heading i.online { box-shadow: 0 0 0 2px #23402d; }
   .widget-login { background: #1b261dcf; border-color: #304033; }
   .widget-login > strong { color: #e7eee9; }

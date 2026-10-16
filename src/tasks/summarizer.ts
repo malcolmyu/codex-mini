@@ -59,6 +59,16 @@ export interface SummarizeRunOptions {
   onAnalyzeStart?: () => void;
 }
 
+export function recencyWeight(updatedAt: string, now = new Date()): number {
+  const ageMs = Math.max(0, now.getTime() - Date.parse(updatedAt));
+  if (!Number.isFinite(ageMs)) return 0;
+  const ageHours = ageMs / 3_600_000;
+  if (ageHours <= 24) return 30;
+  if (ageHours <= 72) return 18;
+  if (ageHours <= 168) return 8;
+  return 0;
+}
+
 function messageText(itemType: string, itemJson: string): string | null {
   try {
     const value = JSON.parse(itemJson) as { text?: unknown; content?: Array<{ type?: unknown; text?: unknown }> };
@@ -84,7 +94,7 @@ function uniqueCandidates(tasks: PendingTask[], limit: number): PendingTask[] {
   const titles = new Set<string>();
   return tasks.filter((task) => {
     if (!task.title || task.title === '未命名 Codex 任务') return false;
-    const key = task.title.toLocaleLowerCase().replace(/\W/gu, '').slice(0, 60);
+    const key = task.title.toLocaleLowerCase().replace(/[^\p{L}\p{N}]/gu, '').slice(0, 60);
     if (titles.has(key)) return false;
     titles.add(key);
     return true;
@@ -178,29 +188,41 @@ export class CodexTaskSummarizer {
     if (!allowAnalysis) {
       const missingSessions = new Set(missing.map((task) => task.sessionId));
       return candidates.flatMap((task) => {
-        if (missingSessions.has(task.sessionId)) return [task];
+        if (missingSessions.has(task.sessionId)) return [{ ...task, reminderEligible: false }];
         const analysis = cache.entries[task.sessionId];
-        if (!analysis?.worthContinuing || analysis.relevanceScore < 65) return [];
+        if (!analysis) return [];
+        const weight = recencyWeight(task.updatedAt, now);
+        const reminderEligible = analysis.worthContinuing && analysis.relevanceScore >= 65;
+        if (!reminderEligible && !(weight >= 18 && analysis.relevanceScore >= 20)) return [];
         return [{
           ...task,
           summary: analysis.summary,
           recommendationReason: analysis.recommendationReason,
           relevanceScore: analysis.relevanceScore,
+          reminderEligible,
         }];
-      }).slice(0, 6);
+      }).sort((left, right) => (right.relevanceScore ?? 0) + recencyWeight(right.updatedAt, now)
+        - (left.relevanceScore ?? 0) - recencyWeight(left.updatedAt, now)
+        || right.score - left.score)
+        .slice(0, 8);
     }
 
     return candidates
       .map((task) => ({ task, analysis: cache.entries[task.sessionId] }))
-      .filter(({ analysis }) => analysis?.worthContinuing && analysis.relevanceScore >= 65)
-      .sort((left, right) => right.analysis.relevanceScore - left.analysis.relevanceScore
+      .filter(({ task, analysis }) => analysis && (
+        (analysis.worthContinuing && analysis.relevanceScore >= 55)
+        || (recencyWeight(task.updatedAt, now) >= 18 && analysis.relevanceScore >= 20)
+      ))
+      .sort((left, right) => right.analysis.relevanceScore + recencyWeight(right.task.updatedAt, now)
+        - left.analysis.relevanceScore - recencyWeight(left.task.updatedAt, now)
         || right.task.score - left.task.score)
-      .slice(0, 6)
+      .slice(0, 8)
       .map(({ task, analysis }) => ({
         ...task,
         summary: analysis.summary,
         recommendationReason: analysis.recommendationReason,
         relevanceScore: analysis.relevanceScore,
+        reminderEligible: analysis.worthContinuing && analysis.relevanceScore >= 65,
       }));
   }
 

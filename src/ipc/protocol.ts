@@ -31,6 +31,7 @@ export interface PendingTask {
   summary?: string;
   recommendationReason?: string;
   relevanceScore?: number;
+  reminderEligible?: boolean;
 }
 
 export interface TaskSnapshot {

@@ -15,6 +15,8 @@ import { loadCredentials, saveCredentials, WeixinChannel } from './weixin/channe
 
 type StatusListener = (status: BridgeStatus) => void;
 export const WEIXIN_LOGIN_POLL_INTERVAL_MS = 400;
+export const DEFAULT_USAGE_REFRESH_INTERVAL_MS = 30_000;
+export const ACTIVE_USAGE_REFRESH_MIN_INTERVAL_MS = 10_000;
 
 function canAnalyzeTasks(usage: UsageSnapshot | undefined): boolean {
   return Boolean(usage && !usage.stale && usage.primary && usage.primary.remainingPercent > 0);
@@ -42,6 +44,7 @@ export class BridgeRuntime {
   private refreshTask: Promise<BridgeStatus> | null = null;
   private usageRefreshPending = false;
   private taskRefreshPending = false;
+  private lastUsageRefreshStartedAt = 0;
   private readonly listeners = new Set<StatusListener>();
   private readonly usageProbe: CodexUsageProbe;
   private readonly taskScanner: CodexTaskScanner;
@@ -184,6 +187,9 @@ export class BridgeRuntime {
 
   refreshTasks(): Promise<BridgeStatus> {
     this.taskRefreshPending = true;
+    if (Date.now() - this.lastUsageRefreshStartedAt >= ACTIVE_USAGE_REFRESH_MIN_INTERVAL_MS) {
+      this.usageRefreshPending = true;
+    }
     if (this.refreshTask) return this.refreshTask;
     this.refreshTask = this.drainInsightRefreshes();
     return this.refreshTask;
@@ -207,6 +213,7 @@ export class BridgeRuntime {
   private async performRefreshInsights(includeUsage: boolean): Promise<BridgeStatus> {
     let usage: UsageSnapshot | undefined = this.status.usage;
     if (includeUsage) {
+      this.lastUsageRefreshStartedAt = Date.now();
       try {
         usage = await this.usageProbe.read();
       } catch (error) {
@@ -361,7 +368,10 @@ export class BridgeRuntime {
 
   private ensureRefreshTimer(): void {
     if (this.refreshTimer) return;
-    this.refreshTimer = setInterval(() => { void this.refreshInsights(); }, this.options.refreshIntervalMs ?? 2 * 60 * 1_000);
+    this.refreshTimer = setInterval(
+      () => { void this.refreshInsights(); },
+      this.options.refreshIntervalMs ?? DEFAULT_USAGE_REFRESH_INTERVAL_MS,
+    );
     this.refreshTimer.unref();
   }
 

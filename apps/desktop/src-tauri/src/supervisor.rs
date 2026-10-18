@@ -63,16 +63,20 @@ enum SupervisorCommand {
 #[derive(Clone)]
 pub struct SupervisorHandle {
     commands: SyncSender<SupervisorCommand>,
+    worker: Arc<Mutex<Option<thread::JoinHandle<()>>>>,
 }
 
 impl SupervisorHandle {
     pub fn spawn(app: tauri::AppHandle, status: Arc<Mutex<BridgeStatus>>) -> Self {
         let (commands, receiver) = mpsc::sync_channel(8);
-        thread::Builder::new()
+        let worker = thread::Builder::new()
             .name("bridge-supervisor".into())
             .spawn(move || supervisor_loop(app, status, receiver))
             .expect("failed to spawn bridge supervisor");
-        Self { commands }
+        Self {
+            commands,
+            worker: Arc::new(Mutex::new(Some(worker))),
+        }
     }
 
     pub fn restart(&self) -> Result<(), String> {
@@ -83,6 +87,14 @@ impl SupervisorHandle {
 
     pub fn shutdown(&self) {
         let _ = self.commands.send(SupervisorCommand::Shutdown);
+        if let Some(worker) = self
+            .worker
+            .lock()
+            .expect("supervisor worker lock poisoned")
+            .take()
+        {
+            let _ = worker.join();
+        }
     }
 
     pub fn refresh_insights(&self) -> Result<(), String> {

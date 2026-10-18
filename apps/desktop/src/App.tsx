@@ -3,9 +3,10 @@ import { listen } from '@tauri-apps/api/event';
 import { currentMonitor, getCurrentWindow } from '@tauri-apps/api/window';
 import { LogicalSize, PhysicalPosition } from '@tauri-apps/api/dpi';
 import QRCode from 'qrcode';
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { formatCompactReset } from './usage-format';
 import { resolveWeixinView } from './weixin-view';
+import { interpolateSize, WIDGET_MOTION_DURATION_MS } from './widget-motion';
 
 type ComponentStatus = 'disconnected' | 'connecting' | 'connected' | 'needs_login' | 'error';
 
@@ -157,6 +158,8 @@ function UsageWidget({ status }: { status: BridgeStatus }) {
   const [openError, setOpenError] = useState<string>();
   const [loginBusy, setLoginBusy] = useState(false);
   const [retryBusy, setRetryBusy] = useState(false);
+  const [motion, setMotion] = useState<'idle' | 'collapsing' | 'expanding'>('idle');
+  const motionRunning = useRef(false);
   const primary = Math.round(status.usage?.primary?.remainingPercent ?? 0);
   const secondary = Math.round(status.usage?.secondary?.remainingPercent ?? 0);
   const weixinView = resolveWeixinView(status.weixin, status.weixinLogin?.state);
@@ -164,13 +167,36 @@ function UsageWidget({ status }: { status: BridgeStatus }) {
     : weixinView === 'login' ? '需扫码'
       : weixinView === 'connecting' ? '连接中' : '暂时异常';
 
-  async function resizeWidget(nextCompact: boolean) {
-    const window = getCurrentWindow();
-    const height = nextCompact ? 80 : 440;
-    await window.setSize(new LogicalSize(nextCompact ? 204 : 360, height));
+  async function resizeWidget(nextCompact: boolean, animate = false, onMidpoint?: () => void) {
+    const appWindow = getCurrentWindow();
+    const target = { width: nextCompact ? 204 : 360, height: nextCompact ? 80 : 440 };
+    const reduceMotion = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+    if (!animate || reduceMotion) {
+      onMidpoint?.();
+      await appWindow.setSize(new LogicalSize(target.width, target.height));
+    } else {
+      const from = { width: globalThis.innerWidth, height: globalThis.innerHeight };
+      let midpointCalled = false;
+      await new Promise<void>((resolve) => {
+        const startedAt = performance.now();
+        const tick = (now: number) => {
+          const progress = Math.min(1, (now - startedAt) / WIDGET_MOTION_DURATION_MS);
+          if (!midpointCalled && progress >= 0.58) {
+            midpointCalled = true;
+            onMidpoint?.();
+          }
+          const size = interpolateSize(from, target, progress);
+          void appWindow.setSize(new LogicalSize(size.width, size.height));
+          if (progress < 1) requestAnimationFrame(tick);
+          else resolve();
+        };
+        requestAnimationFrame(tick);
+      });
+      await appWindow.setSize(new LogicalSize(target.width, target.height));
+    }
     const [position, size, monitor] = await Promise.all([
-      window.outerPosition(),
-      window.outerSize(),
+      appWindow.outerPosition(),
+      appWindow.outerSize(),
       currentMonitor(),
     ]);
     if (!monitor) return;
@@ -180,13 +206,25 @@ function UsageWidget({ status }: { status: BridgeStatus }) {
     const maxY = minY + monitor.size.height - size.height;
     const x = Math.min(Math.max(position.x, minX), Math.max(minX, maxX));
     const y = Math.min(Math.max(position.y, minY), Math.max(minY, maxY));
-    if (x !== position.x || y !== position.y) await window.setPosition(new PhysicalPosition(x, y));
+    if (x !== position.x || y !== position.y) await appWindow.setPosition(new PhysicalPosition(x, y));
   }
 
-  function toggleCompact(nextCompact: boolean) {
-    setCompact(nextCompact);
+  async function toggleCompact(nextCompact: boolean) {
+    if (motionRunning.current || nextCompact === compact) return;
+    motionRunning.current = true;
     localStorage.setItem('usage-widget-compact', String(nextCompact));
-    void resizeWidget(nextCompact);
+    setMotion(nextCompact ? 'collapsing' : 'expanding');
+    if (!nextCompact) {
+      setCompact(false);
+      void invoke('refresh_insights');
+    }
+    try {
+      await resizeWidget(nextCompact, true, nextCompact ? () => setCompact(true) : undefined);
+      setCompact(nextCompact);
+    } finally {
+      setMotion('idle');
+      motionRunning.current = false;
+    }
   }
 
   async function openTask(task: PendingTask) {
@@ -262,7 +300,7 @@ function UsageWidget({ status }: { status: BridgeStatus }) {
 
   if (compact) {
     return (
-      <main className="mini-widget" data-tauri-drag-region>
+      <main className={`mini-widget widget-motion-${motion}`} data-tauri-drag-region>
         <div
           className="mini-rings"
           style={{
@@ -279,12 +317,12 @@ function UsageWidget({ status }: { status: BridgeStatus }) {
           <strong>{primary}<small>%</small></strong>
           <span>{formatCompactReset(status.usage?.primary?.resetsAt)}</span>
         </div>
-        <button type="button" aria-label="展开用量窗口" onClick={() => toggleCompact(false)}>›</button>
+        <button type="button" aria-label="展开用量窗口" onClick={() => void toggleCompact(false)}>›</button>
       </main>
     );
   }
   return (
-    <main className="widget-shell">
+    <main className={`widget-shell widget-motion-${motion}`}>
       <div className="widget-head" data-tauri-drag-region>
         <div data-tauri-drag-region>
           <span className="widget-mark">C</span>
@@ -294,7 +332,7 @@ function UsageWidget({ status }: { status: BridgeStatus }) {
           </span>
         </div>
         <div className="widget-actions">
-          <button className="icon-button" type="button" aria-label="收起用量窗口" onClick={() => toggleCompact(true)}>−</button>
+          <button className="icon-button" type="button" aria-label="收起用量窗口" onClick={() => void toggleCompact(true)}>−</button>
           <button className="icon-button quit-button" type="button" aria-label="退出应用" onClick={() => void invoke('quit_app')}>×</button>
         </div>
       </div>

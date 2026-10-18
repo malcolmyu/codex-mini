@@ -3,7 +3,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { PendingTask, UsageSnapshot } from '../src/ipc/protocol.js';
-import { BridgeRuntime, WEIXIN_LOGIN_POLL_INTERVAL_MS } from '../src/runtime.js';
+import {
+  ACTIVE_USAGE_REFRESH_MIN_INTERVAL_MS,
+  BridgeRuntime,
+  DEFAULT_USAGE_REFRESH_INTERVAL_MS,
+  WEIXIN_LOGIN_POLL_INTERVAL_MS,
+} from '../src/runtime.js';
 import { CodexTaskScanner } from '../src/tasks/scanner.js';
 import { CodexTaskSummarizer } from '../src/tasks/summarizer.js';
 import { CodexUsageProbe } from '../src/usage/probe.js';
@@ -54,6 +59,22 @@ function reminderReadyUsage(): UsageSnapshot {
 describe('BridgeRuntime insight refresh', () => {
   it('polls QR login status without a one-second delay', () => {
     expect(WEIXIN_LOGIN_POLL_INTERVAL_MS).toBe(400);
+  });
+
+  it('refreshes usage frequently and reacts to active Codex conversations', async () => {
+    expect(DEFAULT_USAGE_REFRESH_INTERVAL_MS).toBe(30_000);
+    expect(ACTIVE_USAGE_REFRESH_MIN_INTERVAL_MS).toBe(10_000);
+    const projectRoot = await mkdtemp(join(tmpdir(), 'codex-runtime-refresh-'));
+    directories.push(projectRoot);
+    const usageProbe = new CodexUsageProbe();
+    const read = vi.spyOn(usageProbe, 'read').mockResolvedValue(usage());
+    const taskScanner = new CodexTaskScanner();
+    vi.spyOn(taskScanner, 'scan').mockReturnValue({ candidates: [], scannedAt: new Date().toISOString() });
+    const runtime = new BridgeRuntime({ projectRoot, defaultCwd: projectRoot, usageProbe, taskScanner });
+
+    await runtime.refreshTasks();
+
+    expect(read).toHaveBeenCalledTimes(1);
   });
 
   it('runs one task-only follow-up when a database change arrives during a usage refresh', async () => {

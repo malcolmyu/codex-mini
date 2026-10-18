@@ -2,7 +2,12 @@ mod supervisor;
 
 use std::sync::{Arc, Mutex};
 use supervisor::{BridgeStatus, SupervisorHandle};
-use tauri::{Manager, State, WindowEvent};
+use tauri::{
+    image::Image,
+    menu::{Menu, MenuItem, PredefinedMenuItem},
+    tray::TrayIconBuilder,
+    Manager, State, WindowEvent,
+};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt as AutostartManagerExt};
 
 struct AppState {
@@ -90,6 +95,33 @@ fn show_usage_window(app: &tauri::AppHandle) {
     }
 }
 
+fn install_status_item(app: &tauri::App) -> tauri::Result<()> {
+    let show = MenuItem::with_id(app, "show-widget", "显示浮层", true, None::<&str>)?;
+    let refresh = MenuItem::with_id(app, "refresh-usage", "立即刷新额度", true, None::<&str>)?;
+    let separator = PredefinedMenuItem::separator(app)?;
+    let quit = MenuItem::with_id(app, "quit-app", "退出 Codex Mini", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&show, &refresh, &separator, &quit])?;
+    let icon = Image::from_bytes(include_bytes!("../icons/tray-icon.png"))?;
+
+    TrayIconBuilder::with_id("codex-mini-status")
+        .icon(icon)
+        .icon_as_template(true)
+        .tooltip("Codex Mini")
+        .menu(&menu)
+        .show_menu_on_left_click(true)
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            "show-widget" => show_usage_window(app),
+            "refresh-usage" => {
+                let _ = app.state::<AppState>().supervisor.refresh_insights();
+                show_usage_window(app);
+            }
+            "quit-app" => app.exit(0),
+            _ => {}
+        })
+        .build(app)?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
@@ -117,6 +149,7 @@ pub fn run() {
             let status = Arc::new(Mutex::new(BridgeStatus::default()));
             let supervisor = SupervisorHandle::spawn(app.handle().clone(), status.clone());
             app.manage(AppState { status, supervisor });
+            install_status_item(app)?;
             Ok(())
         })
         .on_window_event(|window, event| {

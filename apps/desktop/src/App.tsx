@@ -108,6 +108,16 @@ function UsageMeter({ title, value }: { title: string; value: UsageWindow | null
   );
 }
 
+function BrandMark() {
+  return (
+    <svg className="brand-mark" viewBox="0 0 44 44" aria-hidden="true">
+      <path d="M33.3 10.7A16 16 0 1 0 33.3 33.3" className="brand-ring-outer" />
+      <path d="M28.4 15.6A9 9 0 1 0 28.4 28.4" className="brand-ring-inner" />
+      <path d="M32.5 17.2Q32.5 16.2 33.4 16.8L40.8 21.1Q42.4 22 40.8 22.9L33.4 27.2Q32.5 27.8 32.5 26.8V17.2Z" className="brand-bridge" />
+    </svg>
+  );
+}
+
 function WidgetLogin({ status, onLogin, busy }: { status: BridgeStatus; onLogin: () => void; busy: boolean }) {
   const [qrData, setQrData] = useState<string>();
   const login = status.weixinLogin;
@@ -325,7 +335,7 @@ function UsageWidget({ status }: { status: BridgeStatus }) {
     <main className={`widget-shell widget-motion-${motion}`}>
       <div className="widget-head" data-tauri-drag-region>
         <div data-tauri-drag-region>
-          <span className="widget-mark">C</span>
+          <span className="widget-mark"><BrandMark /></span>
           <span className="widget-heading" data-tauri-drag-region>
             <strong>Codex</strong>
             <small data-tauri-drag-region><i className={weixinView === 'connected' ? 'online' : ''} />微信{weixinLabel}</small>

@@ -100,7 +100,12 @@ footer { margin-top: 26px; color: #8a948e; text-align: center; font-size: 10px; 
 .widget-heading i { width: 6px; height: 6px; border-radius: 50%; background: #d3685f; box-shadow: 0 0 0 2px #f4deda; }
 .widget-heading i.online { background: #3baa69; box-shadow: 0 0 0 2px #d9efdf; }
 .widget-actions { display: flex; gap: 6px; }
-.widget-mark { width: 28px; height: 28px; border-radius: 9px; color: #d4fff5; background: #155b5a; box-shadow: inset 0 1px 0 #68aaa2; font-size: 14px; }
+.widget-mark { width: 30px; height: 30px; border: 1px solid #ffffff2e; border-radius: 10px; color: #d4fff5; background: #123c35; box-shadow: inset 0 1px 0 #68aaa25c, 0 5px 13px #12251a24; }
+.brand-mark { width: 24px; height: 24px; overflow: visible; }
+.brand-mark path { fill: none; stroke-linecap: round; }
+.brand-ring-outer { stroke: #66d99a; stroke-width: 5; }
+.brand-ring-inner { stroke: #d8ff63; stroke-width: 4; }
+.brand-mark .brand-bridge { fill: #effff4; stroke: none; }
 .icon-button { width: 26px; height: 26px; border: 1px solid #ffffff66; border-radius: 50%; color: #61736b; background: var(--glass-control); box-shadow: inset 0 1px 0 #ffffff8c; font-size: 18px; line-height: 1; }
 .quit-button:hover { color: #8b3e37; background: #f4dedb; }
 .widget-usage { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; padding: 16px; border: 1px solid var(--glass-divider); border-radius: 15px; background: var(--glass-panel-strong); box-shadow: 0 10px 30px #24392a0d, inset 0 1px 0 #ffffff85; }

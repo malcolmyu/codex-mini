@@ -85,7 +85,14 @@ export class Bridge {
         await this.options.state.bind(message.conversationId, binding);
       }
       this.sessionConversation.set(binding.sessionId, message.conversationId);
-      await this.options.codex.loadSession(binding.sessionId, binding.cwd);
+      try {
+        await this.options.codex.loadSession(binding.sessionId, binding.cwd);
+      } catch {
+        const sessionId = await this.options.codex.createSession(binding.cwd);
+        binding = { ...binding, sessionId, updatedAt: new Date().toISOString() };
+        await this.options.state.bind(message.conversationId, binding);
+        this.sessionConversation.set(sessionId, message.conversationId);
+      }
       const answer = await this.options.codex.prompt(binding.sessionId, text);
       await this.options.state.bind(message.conversationId, {
         ...binding,

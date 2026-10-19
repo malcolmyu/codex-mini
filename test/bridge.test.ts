@@ -10,11 +10,15 @@ import type { CodexAgent, CodexSessionSummary, MessageChannel, OutgoingMessage }
 class FakeCodex implements CodexAgent {
   prompts: Array<[string, string]> = [];
   loads: Array<[string, string]> = [];
+  failLoads = new Set<string>();
   permissionHandler: ((request: acp.RequestPermissionRequest) => Promise<acp.RequestPermissionResponse>) | null = null;
   async start() {}
   async stop() {}
   async createSession(_cwd: string) { return 'session-new'; }
-  async loadSession(sessionId: string, cwd: string) { this.loads.push([sessionId, cwd]); }
+  async loadSession(sessionId: string, cwd: string) {
+    this.loads.push([sessionId, cwd]);
+    if (this.failLoads.has(sessionId)) throw new Error('Internal error');
+  }
   async listSessions(): Promise<CodexSessionSummary[]> { return [{ sessionId: 'session-new', cwd: '/project', title: 'POC' }]; }
   async prompt(sessionId: string, text: string) { this.prompts.push([sessionId, text]); return `answer:${text}`; }
   async cancel(_sessionId: string) {}
@@ -34,9 +38,10 @@ async function fixture() {
   roots.push(root);
   const codex = new FakeCodex();
   const channel = new RecordingChannel();
-  const bridge = new Bridge({ codex, channel, state: new StateStore(join(root, 'state.json')), defaultCwd: '/project', ownerId: 'owner' });
+  const state = new StateStore(join(root, 'state.json'));
+  const bridge = new Bridge({ codex, channel, state, defaultCwd: '/project', ownerId: 'owner' });
   await bridge.start();
-  return { bridge, codex, channel };
+  return { bridge, codex, channel, state };
 }
 
 describe('Bridge', () => {
@@ -53,6 +58,23 @@ describe('Bridge', () => {
     await bridge.accept({ conversationId: 'attacker', senderId: 'attacker', text: 'run command' });
     expect(codex.prompts).toEqual([]);
     expect(channel.messages).toEqual([]);
+  });
+
+  it('replaces a stale conversation binding when its Codex session cannot be restored', async () => {
+    const { bridge, codex, channel, state } = await fixture();
+    codex.failLoads.add('session-stale');
+    await state.bind('chat', {
+      sessionId: 'session-stale',
+      cwd: '/project',
+      updatedAt: new Date().toISOString(),
+    });
+
+    await bridge.accept({ conversationId: 'chat', senderId: 'owner', text: 'continue' });
+
+    expect(codex.loads).toEqual([['session-stale', '/project']]);
+    expect(codex.prompts).toEqual([['session-new', 'continue']]);
+    expect(await state.binding('chat')).toMatchObject({ sessionId: 'session-new', cwd: '/project' });
+    expect(channel.messages.at(-1)?.text).toBe('answer:continue');
   });
 
   it('lists sessions through the command router', async () => {

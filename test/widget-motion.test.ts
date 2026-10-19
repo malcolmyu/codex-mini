@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { easeOutCubic, interpolateSize, WIDGET_MOTION_DURATION_MS } from '../apps/desktop/src/widget-motion.js';
+import {
+  easeOutCubic,
+  fitExpandedWidgetHeight,
+  interpolateSize,
+  WIDGET_MOTION_DURATION_MS,
+} from '../apps/desktop/src/widget-motion.js';
 
 describe('floating widget motion', () => {
   it('uses a brief non-zero transition', () => {
@@ -22,5 +27,11 @@ describe('floating widget motion', () => {
   it('clamps easing progress to avoid overshoot', () => {
     expect(easeOutCubic(-1)).toBe(0);
     expect(easeOutCubic(2)).toBe(1);
+  });
+
+  it('grows the expanded window to fit dynamic content without exceeding the screen', () => {
+    expect(fitExpandedWidgetHeight(410, 900)).toBe(440);
+    expect(fitExpandedWidgetHeight(478, 900)).toBe(478);
+    expect(fitExpandedWidgetHeight(720, 600)).toBe(600);
   });
 });

@@ -89,6 +89,7 @@ footer { margin-top: 26px; color: #8a948e; text-align: center; font-size: 10px; 
   --glass-ring-center: #e8f5f1;
 }
 .widget-shell { min-height: 100vh; padding: 14px; overflow: hidden; border: 1px solid var(--glass-edge); border-radius: 20px; background: var(--glass-shell-background); box-shadow: var(--glass-shadow); transform-origin: 28px 34px; user-select: none; -webkit-user-select: none; }
+.widget-content { min-width: 0; }
 .widget-shell.widget-motion-collapsing { animation: widget-shell-out 170ms cubic-bezier(.4, 0, 1, 1) both; pointer-events: none; }
 .widget-shell.widget-motion-expanding { animation: widget-shell-in 240ms 35ms cubic-bezier(.16, 1, .3, 1) both; }
 .widget-head { display: flex; align-items: center; justify-content: space-between; min-height: 52px; margin: -6px -4px 0; padding: 6px 4px 8px; cursor: grab; }

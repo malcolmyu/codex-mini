@@ -6,7 +6,12 @@ import QRCode from 'qrcode';
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { formatCompactReset } from './usage-format';
 import { resolveWeixinView } from './weixin-view';
-import { interpolateSize, WIDGET_MOTION_DURATION_MS } from './widget-motion';
+import {
+  EXPANDED_WIDGET_MIN_HEIGHT,
+  fitExpandedWidgetHeight,
+  interpolateSize,
+  WIDGET_MOTION_DURATION_MS,
+} from './widget-motion';
 
 type ComponentStatus = 'disconnected' | 'connecting' | 'connected' | 'needs_login' | 'error';
 
@@ -170,6 +175,7 @@ function UsageWidget({ status }: { status: BridgeStatus }) {
   const [retryBusy, setRetryBusy] = useState(false);
   const [motion, setMotion] = useState<'idle' | 'collapsing' | 'expanding'>('idle');
   const motionRunning = useRef(false);
+  const expandedContent = useRef<HTMLDivElement>(null);
   const primary = Math.round(status.usage?.primary?.remainingPercent ?? 0);
   const secondary = Math.round(status.usage?.secondary?.remainingPercent ?? 0);
   const weixinView = resolveWeixinView(status.weixin, status.weixinLogin?.state);
@@ -177,9 +183,14 @@ function UsageWidget({ status }: { status: BridgeStatus }) {
     : weixinView === 'login' ? '需扫码'
       : weixinView === 'connecting' ? '连接中' : '暂时异常';
 
-  async function resizeWidget(nextCompact: boolean, animate = false, onMidpoint?: () => void) {
+  async function resizeWidget(
+    nextCompact: boolean,
+    animate = false,
+    onMidpoint?: () => void,
+    expandedHeight = EXPANDED_WIDGET_MIN_HEIGHT,
+  ) {
     const appWindow = getCurrentWindow();
-    const target = { width: nextCompact ? 204 : 360, height: nextCompact ? 80 : 440 };
+    const target = { width: nextCompact ? 204 : 360, height: nextCompact ? 80 : expandedHeight };
     const reduceMotion = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
     if (!animate || reduceMotion) {
       onMidpoint?.();
@@ -304,6 +315,37 @@ function UsageWidget({ status }: { status: BridgeStatus }) {
     };
   }, [compact]);
 
+  useEffect(() => {
+    if (compact || !expandedContent.current) return undefined;
+    const content = expandedContent.current;
+    let frame = 0;
+    let cancelled = false;
+    const fitContent = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        void (async () => {
+          const monitor = await currentMonitor();
+          if (cancelled || !monitor) return;
+          const contentHeight = Math.ceil(content.getBoundingClientRect().height + 28);
+          const availableHeight = Math.floor(monitor.size.height / monitor.scaleFactor) - 24;
+          const targetHeight = fitExpandedWidgetHeight(contentHeight, availableHeight);
+          if (Math.abs(globalThis.innerHeight - targetHeight) < 1) return;
+          await resizeWidget(false, false, undefined, targetHeight);
+        })();
+      });
+    };
+    const observer = new ResizeObserver(fitContent);
+    observer.observe(content);
+    fitContent();
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
+    // resizeWidget uses only current window geometry; recreating the observer on every status render is unnecessary.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [compact]);
+
   useEffect(() => setTaskOffset(0), [taskSignature]);
 
   const visibleTasks = tasks.slice(taskOffset, taskOffset + 3);
@@ -333,6 +375,7 @@ function UsageWidget({ status }: { status: BridgeStatus }) {
   }
   return (
     <main className={`widget-shell widget-motion-${motion}`}>
+      <div className="widget-content" ref={expandedContent}>
       <div className="widget-head" data-tauri-drag-region>
         <div data-tauri-drag-region>
           <span className="widget-mark"><BrandMark /></span>
@@ -402,6 +445,7 @@ function UsageWidget({ status }: { status: BridgeStatus }) {
         </div>
       )}
       {openError && <p className="widget-open-error">{openError}</p>}
+      </div>
     </main>
   );
 }

@@ -12,6 +12,7 @@ import {
 import { CodexTaskScanner } from '../src/tasks/scanner.js';
 import { CodexTaskSummarizer } from '../src/tasks/summarizer.js';
 import { CodexUsageProbe } from '../src/usage/probe.js';
+import { WeixinApi } from '../src/weixin/api.js';
 
 const directories: string[] = [];
 afterEach(async () => Promise.all(directories.splice(0).map((path) => rm(path, { recursive: true, force: true }))));
@@ -59,6 +60,26 @@ function reminderReadyUsage(): UsageSnapshot {
 describe('BridgeRuntime insight refresh', () => {
   it('polls QR login status without a one-second delay', () => {
     expect(WEIXIN_LOGIN_POLL_INTERVAL_MS).toBe(400);
+  });
+
+  it('keeps waiting for a QR scan after an individual long-poll timeout', async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), 'codex-runtime-login-'));
+    directories.push(projectRoot);
+    const weixinApi = new WeixinApi();
+    vi.spyOn(weixinApi, 'beginLogin').mockResolvedValue({
+      qrcode: 'qr-1',
+      qrcodeUrl: 'https://ilinkai.weixin.qq.com/qr/qr-1',
+    });
+    const poll = vi.spyOn(weixinApi, 'pollLogin')
+      .mockRejectedValueOnce(new DOMException('The operation was aborted due to timeout', 'TimeoutError'))
+      .mockResolvedValue({ status: 'waiting_scan' });
+    const runtime = new BridgeRuntime({ projectRoot, defaultCwd: projectRoot, weixinApi });
+
+    await runtime.startWeixinLogin();
+    await vi.waitFor(() => expect(poll).toHaveBeenCalledTimes(2), { timeout: 1_500 });
+
+    expect(runtime.currentStatus().weixinLogin).toMatchObject({ state: 'waiting_scan' });
+    await runtime.stop();
   });
 
   it('refreshes usage frequently and reacts to active Codex conversations', async () => {

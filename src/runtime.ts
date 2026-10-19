@@ -338,7 +338,14 @@ export class BridgeRuntime {
   private async pollWeixinLogin(qrcode: string, controller: AbortController): Promise<void> {
     try {
       while (!controller.signal.aborted) {
-        const response = await this.weixinApi.pollLogin(qrcode, controller.signal);
+        let response;
+        try {
+          response = await this.weixinApi.pollLogin(qrcode, controller.signal);
+        } catch (error) {
+          if (controller.signal.aborted) return;
+          if (error instanceof DOMException && error.name === 'TimeoutError') continue;
+          throw error;
+        }
         const state = String(response.status ?? 'waiting_scan');
         const credentials = this.weixinApi.credentialsFromLogin(response);
         if (credentials) {

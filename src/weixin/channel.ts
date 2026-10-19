@@ -24,6 +24,18 @@ export async function saveCredentials(path: string, credentials: WeixinCredentia
   await writePrivateJson(path, credentials);
 }
 
+export async function quarantineCredentials(path: string, now = new Date()): Promise<string | null> {
+  const suffix = now.toISOString().replace(/[:.]/g, '-');
+  const quarantinePath = `${path}.stale-${suffix}`;
+  try {
+    await rename(path, quarantinePath);
+    return quarantinePath;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
 export async function loadCredentials(path: string): Promise<WeixinCredentials> {
   const value: unknown = JSON.parse(await readFile(path, 'utf8'));
   if (!value || typeof value !== 'object') throw new Error('Invalid Weixin credentials');
@@ -66,9 +78,6 @@ export class WeixinChannel implements MessageChannel {
           if (signal?.aborted) break;
           if ((error as Error).name === 'TimeoutError') continue;
           throw error;
-        }
-        if (Number(response.ret ?? response.errcode ?? 0) !== 0) {
-          throw new Error(`Weixin updates rejected: ${String(response.ret ?? response.errcode)}`);
         }
         const messages = Array.isArray(response.msgs) ? response.msgs : [];
         for (const raw of messages) {

@@ -10,8 +10,13 @@ import { CodexTaskScanner } from './tasks/scanner.js';
 import { CodexTaskSummarizer } from './tasks/summarizer.js';
 import { CodexTaskWatcher } from './tasks/watcher.js';
 import { CodexUsageProbe } from './usage/probe.js';
-import { WeixinApi } from './weixin/api.js';
-import { loadCredentials, saveCredentials, WeixinChannel } from './weixin/channel.js';
+import { isStaleWeixinTokenError, WeixinApi } from './weixin/api.js';
+import {
+  loadCredentials,
+  quarantineCredentials,
+  saveCredentials,
+  WeixinChannel,
+} from './weixin/channel.js';
 
 type StatusListener = (status: BridgeStatus) => void;
 export const WEIXIN_LOGIN_POLL_INTERVAL_MS = 400;
@@ -136,8 +141,25 @@ export class BridgeRuntime {
       }
       await bridge.accept(message);
     }, controller.signal)
-      .catch((error) => {
-        if (!controller.signal.aborted) this.fail(error, resolvedCwd);
+      .catch(async (error) => {
+        if (controller.signal.aborted) return;
+        if (isStaleWeixinTokenError(error)) {
+          const credentialsPath = join(dataDir, 'weixin-credentials.json');
+          try {
+            await quarantineCredentials(credentialsPath);
+            this.setLogin({
+              state: 'error',
+              updatedAt: new Date().toISOString(),
+              error: '微信登录已过期，请重新扫码。',
+            });
+          } catch (quarantineError) {
+            this.fail(new Error(
+              `微信登录已过期，但旧凭据无法隔离：${quarantineError instanceof Error ? quarantineError.message : String(quarantineError)}`,
+            ), resolvedCwd);
+          }
+          return;
+        }
+        this.fail(error, resolvedCwd);
       })
       .finally(() => {
         if (this.controller === controller && !controller.signal.aborted) {

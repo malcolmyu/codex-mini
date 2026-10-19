@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   extractWeixinText,
+  isStaleWeixinTokenError,
   WEIXIN_LOGIN_POLL_TIMEOUT_MS,
   WeixinApi,
   type WeixinCredentials,
@@ -18,6 +19,20 @@ describe('WeixinApi', () => {
     expect(WEIXIN_LOGIN_POLL_TIMEOUT_MS).toBe(5_000);
   });
 
+  it('does not impose a short client timeout while requesting a QR code', async () => {
+    const controller = new AbortController();
+    const fetchMock = vi.fn(async (_url: URL, init?: RequestInit) => {
+      expect(init?.signal).toBe(controller.signal);
+      return new Response(JSON.stringify({
+        qrcode: 'qr-1',
+        qrcode_img_content: 'https://ilinkai.weixin.qq.com/qr/qr-1',
+      }), { status: 200 });
+    });
+    const api = new WeixinApi(fetchMock as typeof fetch);
+
+    await expect(api.beginLogin(controller.signal)).resolves.toMatchObject({ qrcode: 'qr-1' });
+  });
+
   it('builds the iLink text message request', async () => {
     const fetchMock = vi.fn(async (_url: URL, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body));
@@ -30,6 +45,15 @@ describe('WeixinApi', () => {
     const api = new WeixinApi(fetchMock as typeof fetch);
     await api.sendText(credentials, 'owner-1', 'hello', 'context');
     expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it('classifies a -14 response as an expired login', async () => {
+    const fetchMock = vi.fn(async () => (
+      new Response(JSON.stringify({ ret: -14, errmsg: 'token expired' }), { status: 200 })
+    ));
+    const api = new WeixinApi(fetchMock as typeof fetch);
+
+    await expect(api.notifyStart(credentials)).rejects.toSatisfy(isStaleWeixinTokenError);
   });
 });
 

@@ -4,6 +4,22 @@ export const WEIXIN_QR_BASE_URL = 'https://ilinkai.weixin.qq.com/';
 const PROTOCOL_VERSION = '2.4.6';
 const CLIENT_VERSION = (2 << 16) | (4 << 8) | 6;
 export const WEIXIN_LOGIN_POLL_TIMEOUT_MS = 5_000;
+export const WEIXIN_STALE_TOKEN_CODE = -14;
+
+export class WeixinApiError extends Error {
+  constructor(
+    readonly operation: string,
+    readonly code: number,
+    readonly detail?: string,
+  ) {
+    super(`Weixin ${operation} rejected: ${code}${detail ? ` (${detail})` : ''}`);
+    this.name = 'WeixinApiError';
+  }
+}
+
+export function isStaleWeixinTokenError(error: unknown): boolean {
+  return error instanceof WeixinApiError && error.code === WEIXIN_STALE_TOKEN_CODE;
+}
 
 export interface WeixinCredentials {
   token: string;
@@ -44,6 +60,14 @@ function baseInfo(): Record<string, string> {
   return { channel_version: PROTOCOL_VERSION, bot_agent: 'CodexWechatAcpPoc/0.1.0' };
 }
 
+function assertAccepted(response: Record<string, unknown>, operation: string): void {
+  const rawCode = response.ret ?? response.errcode ?? 0;
+  const code = Number(rawCode);
+  if (Number.isFinite(code) && code !== 0) {
+    throw new WeixinApiError(operation, code, text(response.errmsg) ?? undefined);
+  }
+}
+
 function headers(token?: string): Record<string, string> {
   return {
     'iLink-App-Id': 'bot',
@@ -58,13 +82,19 @@ async function requestJson(
   fetchImpl: typeof fetch,
   baseUrl: string,
   endpoint: string,
-  options: { method: 'GET' | 'POST'; token?: string; body?: unknown; signal?: AbortSignal; timeoutMs?: number },
+  options: {
+    method: 'GET' | 'POST';
+    token?: string;
+    body?: unknown;
+    signal?: AbortSignal;
+    timeoutMs?: number | null;
+  },
 ): Promise<Record<string, unknown>> {
   const base = normalizeBaseUrl(baseUrl);
   const url = new URL(endpoint, base);
   if (!isWeixinHost(url.hostname)) throw new Error(`Untrusted Weixin endpoint: ${url.hostname}`);
-  const timeout = AbortSignal.timeout(options.timeoutMs ?? 35_000);
-  const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
+  const timeout = options.timeoutMs === null ? null : AbortSignal.timeout(options.timeoutMs ?? 35_000);
+  const signal = options.signal && timeout ? AbortSignal.any([options.signal, timeout]) : options.signal ?? timeout ?? undefined;
   const response = await fetchImpl(url, {
     method: options.method,
     headers: headers(options.token),
@@ -85,7 +115,7 @@ export class WeixinApi {
       method: 'POST',
       body: { local_token_list: [] },
       signal,
-      timeoutMs: 10_000,
+      timeoutMs: null,
     });
     const qrcode = text(response.qrcode);
     const qrcodeUrl = text(response.qrcode_img_content);
@@ -118,7 +148,7 @@ export class WeixinApi {
     const response = await requestJson(this.fetchImpl, credentials.baseUrl, 'ilink/bot/msg/notifystart', {
       method: 'POST', token: credentials.token, body: { base_info: baseInfo() }, signal, timeoutMs: 10_000,
     });
-    if (Number(response.ret ?? response.errcode ?? 0) !== 0) throw new Error(`Weixin start rejected: ${String(response.ret ?? response.errcode)}`);
+    assertAccepted(response, 'start');
   }
 
   async notifyStop(credentials: WeixinCredentials): Promise<void> {
@@ -128,10 +158,12 @@ export class WeixinApi {
   }
 
   async getUpdates(credentials: WeixinCredentials, cursor: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
-    return requestJson(this.fetchImpl, credentials.baseUrl, 'ilink/bot/getupdates', {
+    const response = await requestJson(this.fetchImpl, credentials.baseUrl, 'ilink/bot/getupdates', {
       method: 'POST', token: credentials.token,
       body: { get_updates_buf: cursor, base_info: baseInfo() }, signal,
     });
+    assertAccepted(response, 'updates');
+    return response;
   }
 
   async sendText(
@@ -158,7 +190,7 @@ export class WeixinApi {
         base_info: baseInfo(),
       },
     });
-    if (Number(response.ret ?? response.errcode ?? 0) !== 0) throw new Error(`Weixin send rejected: ${String(response.ret ?? response.errcode)}`);
+    assertAccepted(response, 'send');
   }
 }
 

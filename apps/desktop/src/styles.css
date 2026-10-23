@@ -96,6 +96,11 @@ footer { margin-top: 26px; color: #8a948e; text-align: center; font-size: 10px; 
   --orb-weekly-track: #edf0f1;
   --orb-center: #ffffff;
   --orb-center-border: #e2e7e7;
+  --quota-urgent: #d68a18;
+  --quota-urgent-track: #f4e5c9;
+  --quota-urgent-surface: #fff9ee;
+  --quota-urgent-border: #e8bd75;
+  --quota-urgent-glow: #dc952f80;
   position: relative;
   width: 100vw;
   height: 100vh;
@@ -136,6 +141,10 @@ footer { margin-top: 26px; color: #8a948e; text-align: center; font-size: 10px; 
 .widget-usage .usage-track { background: var(--orb-primary-track); }
 .widget-usage .usage-track span { background: var(--orb-primary); }
 .widget-usage .usage-meter small { color: var(--widget-subtle); }
+.widget-usage .usage-meter.urgent { background: var(--quota-urgent-surface); box-shadow: inset 0 0 0 1px var(--quota-urgent-border); }
+.widget-usage .usage-meter.urgent .usage-label strong, .widget-usage .usage-meter.urgent small { color: var(--quota-urgent); }
+.widget-usage .usage-meter.urgent .usage-track { background: var(--quota-urgent-track); }
+.widget-usage .usage-meter.urgent .usage-track span { background: var(--quota-urgent); }
 .widget-section-title { display: flex; align-items: center; justify-content: space-between; margin-top: 15px; padding: 0 3px; color: var(--widget-text); font-size: 11px; }
 .widget-section-title span { color: var(--widget-muted); font-size: 9px; }
 .widget-section-meta { display: flex; align-items: center; gap: 7px; }
@@ -175,6 +184,9 @@ footer { margin-top: 26px; color: #8a948e; text-align: center; font-size: 10px; 
 
 .usage-orb { --primary-quota: 0deg; --weekly-quota: 0deg; position: absolute; z-index: 5; top: 12px; left: 12px; display: grid; place-items: center; width: 72px; height: 72px; padding: 0; border: 0; border-radius: 50%; background: conic-gradient(from -90deg, var(--orb-weekly) var(--weekly-quota), var(--orb-weekly-track) 0); box-shadow: 0 3px 8px #263d3230; cursor: grab; user-select: none; -webkit-user-select: none; }
 .usage-orb::before { content: ""; position: absolute; inset: 5px; border-radius: inherit; background: conic-gradient(from -90deg, var(--orb-primary) var(--primary-quota), var(--orb-primary-track) 0); pointer-events: none; }
+.orb-stage.secondary-urgent .usage-orb { background: conic-gradient(from -90deg, var(--quota-urgent) var(--weekly-quota), var(--quota-urgent-track) 0); }
+.orb-stage.primary-urgent .usage-orb::before { background: conic-gradient(from -90deg, var(--quota-urgent) var(--primary-quota), var(--quota-urgent-track) 0); }
+.orb-stage.quota-urgent:not(.dragging) .usage-orb { animation: quota-urgent-breathe 2.4s ease-in-out infinite; }
 .orb-stage.expand-left .usage-orb { right: 12px; left: auto; }
 .orb-stage.expand-right .usage-orb { right: auto; left: 12px; }
 .orb-stage.expand-up .usage-orb { top: auto; bottom: 12px; }
@@ -189,10 +201,16 @@ footer { margin-top: 26px; color: #8a948e; text-align: center; font-size: 10px; 
 .mini-orb-value strong { font: 650 17px/1 ui-monospace, "SFMono-Regular", monospace; letter-spacing: -.03em; }
 .mini-orb-value span { margin-left: 1px; color: var(--widget-muted); font: 700 7px/1 ui-monospace, monospace; }
 .mini-orb-reset { width: 48px; margin-top: 4px; color: var(--widget-muted); font: 500 9px/12px -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; font-variant-numeric: tabular-nums; text-align: center; white-space: nowrap; }
+.orb-stage.primary-urgent .mini-orb-reset { color: var(--quota-urgent); font-weight: 650; }
 .usage-orb:focus-visible { outline: 2px solid var(--orb-primary); outline-offset: 2px; }
+@keyframes quota-urgent-breathe {
+  0%, 100% { filter: drop-shadow(0 0 1px var(--quota-urgent-glow)); }
+  50% { filter: drop-shadow(0 0 7px var(--quota-urgent-glow)); }
+}
 
 @media (prefers-reduced-motion: reduce) {
-  .widget-shell, .widget-connection-spinner { animation: none !important; transition: none !important; }
+  .widget-shell, .widget-connection-spinner, .orb-stage.quota-urgent .usage-orb { animation: none !important; transition: none !important; }
+  .orb-stage.quota-urgent .usage-orb { filter: drop-shadow(0 0 4px var(--quota-urgent-glow)); }
 }
 
 @media (prefers-color-scheme: dark) {

@@ -4,7 +4,7 @@ import { currentMonitor, getCurrentWindow } from '@tauri-apps/api/window';
 import { LogicalPosition, LogicalSize, PhysicalPosition } from '@tauri-apps/api/dpi';
 import QRCode from 'qrcode';
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
-import { formatCompactReset, formatOrbReset } from './usage-format';
+import { formatCompactReset, formatOrbReset, isQuotaUrgent } from './usage-format';
 import { resolveWeixinView } from './weixin-view';
 import {
   collapsedWidgetBounds,
@@ -91,9 +91,9 @@ function useBridgeStatus() {
   return status;
 }
 
-function formatReset(value: number | null): string {
+function formatReset(value: number | null, nowMs = Date.now()): string {
   if (!value) return '未知';
-  const delta = value * 1_000 - Date.now();
+  const delta = value * 1_000 - nowMs;
   if (delta <= 0) return '即将刷新';
   const hours = Math.floor(delta / 3_600_000);
   const minutes = Math.max(1, Math.round((delta % 3_600_000) / 60_000));
@@ -110,13 +110,27 @@ function formatRelativeTime(value: string | undefined): string {
   return `${Math.floor(hours / 24)} 天前`;
 }
 
-function UsageMeter({ title, value }: { title: string; value: UsageWindow | null | undefined }) {
+function UsageMeter({
+  title,
+  value,
+  urgent,
+  nowMs,
+}: {
+  title: string;
+  value: UsageWindow | null | undefined;
+  urgent: boolean;
+  nowMs: number;
+}) {
   const remaining = Math.round(value?.remainingPercent ?? 0);
   return (
-    <div className="usage-meter">
+    <div className={`usage-meter${urgent ? ' urgent' : ''}`}>
       <div className="usage-label"><span>{title}</span><strong>{value ? `${remaining}%` : '—'}</strong></div>
       <div className="usage-track"><span style={{ width: `${remaining}%` }} /></div>
-      <small>{value ? `${formatReset(value.resetsAt)}后重置` : '等待 Codex 用量数据'}</small>
+      <small>{value
+        ? urgent
+          ? `即将恢复，建议用掉 · ${formatReset(value.resetsAt, nowMs)}`
+          : `${formatReset(value.resetsAt, nowMs)}后重置`
+        : '等待 Codex 用量数据'}</small>
     </div>
   );
 }
@@ -202,10 +216,18 @@ function UsageWidget({ status }: { status: BridgeStatus }) {
   const [loginBusy, setLoginBusy] = useState(false);
   const [retryBusy, setRetryBusy] = useState(false);
   const [motion, setMotion] = useState<'idle' | 'collapsing' | 'expanding'>('idle');
+  const [nowMs, setNowMs] = useState(Date.now);
   const motionRunning = useRef(false);
   const expandedContent = useRef<HTMLDivElement>(null);
   const primary = Math.round(status.usage?.primary?.remainingPercent ?? 0);
   const secondary = Math.round(status.usage?.secondary?.remainingPercent ?? 0);
+  const primaryUrgent = isQuotaUrgent(status.usage?.primary, nowMs);
+  const secondaryUrgent = isQuotaUrgent(status.usage?.secondary, nowMs);
+  const quotaUrgent = primaryUrgent || secondaryUrgent;
+  const urgencyLabel = [
+    primaryUrgent ? '5 小时额度即将恢复，建议用掉' : '',
+    secondaryUrgent ? '本周额度即将恢复，建议用掉' : '',
+  ].filter(Boolean).join('；');
   const weixinView = resolveWeixinView(status.weixin, status.weixinLogin?.state);
   const weixinLabel = weixinView === 'connected' ? '已连接'
     : weixinView === 'login' ? '需扫码'
@@ -531,11 +553,16 @@ function UsageWidget({ status }: { status: BridgeStatus }) {
 
   useEffect(() => setTaskOffset(0), [taskSignature]);
 
+  useEffect(() => {
+    const timer = setInterval(() => setNowMs(Date.now()), 60_000);
+    return () => clearInterval(timer);
+  }, []);
+
   const visibleTasks = tasks.slice(taskOffset, taskOffset + 3);
 
   return (
     <main
-      className={`orb-stage ${compact ? 'compact' : 'expanded'} ${pinned ? 'pinned' : ''} ${draggingOrb ? 'dragging' : ''} expand-${direction.horizontal} expand-${direction.vertical} widget-motion-${motion}`}
+      className={`orb-stage ${compact ? 'compact' : 'expanded'} ${pinned ? 'pinned' : ''} ${draggingOrb ? 'dragging' : ''} ${quotaUrgent ? 'quota-urgent' : ''} ${primaryUrgent ? 'primary-urgent' : ''} ${secondaryUrgent ? 'secondary-urgent' : ''} expand-${direction.horizontal} expand-${direction.vertical} widget-motion-${motion}`}
     >
       <section className="widget-shell">
       <div className="widget-content" ref={expandedContent}>
@@ -552,8 +579,8 @@ function UsageWidget({ status }: { status: BridgeStatus }) {
         </div>
       </div>
       <div className="widget-usage">
-        <UsageMeter title="5 小时" value={status.usage?.primary} />
-        <UsageMeter title="本周" value={status.usage?.secondary} />
+        <UsageMeter title="5 小时" value={status.usage?.primary} urgent={primaryUrgent} nowMs={nowMs} />
+        <UsageMeter title="本周" value={status.usage?.secondary} urgent={secondaryUrgent} nowMs={nowMs} />
       </div>
       <div className="widget-section-title">
         <strong>{weixinView === 'connected' ? '推荐关注的对话' : '微信连接'}</strong>
@@ -616,8 +643,8 @@ function UsageWidget({ status }: { status: BridgeStatus }) {
           '--weekly-quota': `${secondary * 3.6}deg`,
         } as CSSProperties}
         type="button"
-        title={formatCompactReset(status.usage?.primary?.resetsAt)}
-        aria-label={`5 小时剩余 ${primary}%，${formatCompactReset(status.usage?.primary?.resetsAt)}；本周剩余 ${secondary}%；点击固定或取消固定`}
+        title={formatCompactReset(status.usage?.primary?.resetsAt, nowMs)}
+        aria-label={`5 小时剩余 ${primary}%，${formatCompactReset(status.usage?.primary?.resetsAt, nowMs)}；本周剩余 ${secondary}%${urgencyLabel ? `；${urgencyLabel}` : ''}；点击固定或取消固定`}
         onPointerDown={beginOrbGesture}
         onPointerMove={moveOrbGesture}
         onPointerUp={finishOrbGesture}
@@ -632,7 +659,7 @@ function UsageWidget({ status }: { status: BridgeStatus }) {
       >
         <span className="mini-orb-button" aria-hidden="true">
           <span className="mini-orb-value"><strong>{primary}</strong><span>%</span></span>
-          <small className="mini-orb-reset">{formatOrbReset(status.usage?.primary?.resetsAt)}</small>
+          <small className="mini-orb-reset">{formatOrbReset(status.usage?.primary?.resetsAt, nowMs)}</small>
         </span>
       </button>
     </main>

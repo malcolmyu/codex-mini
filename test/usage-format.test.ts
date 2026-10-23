@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatCompactReset, formatOrbReset } from '../apps/desktop/src/usage-format.js';
+import { formatCompactReset, formatOrbReset, isQuotaUrgent } from '../apps/desktop/src/usage-format.js';
 
 describe('compact usage reset copy', () => {
   const now = 1_800_000_000_000;
@@ -25,5 +25,28 @@ describe('compact usage reset copy', () => {
   it('formats minute and hour countdowns', () => {
     expect(formatCompactReset((now + 42 * 60_000) / 1_000, now)).toBe('42 分钟后恢复');
     expect(formatCompactReset((now + (2 * 60 + 8) * 60_000) / 1_000, now)).toBe('2 小时 8 分后恢复');
+  });
+
+  it('marks quota urgent at the inclusive reset and remaining boundaries', () => {
+    expect(isQuotaUrgent({
+      remainingPercent: 40,
+      resetsAt: (now + 30 * 60_000) / 1_000,
+    }, now)).toBe(true);
+  });
+
+  it('does not mark quota urgent outside either boundary', () => {
+    expect(isQuotaUrgent({
+      remainingPercent: 39,
+      resetsAt: (now + 30 * 60_000) / 1_000,
+    }, now)).toBe(false);
+    expect(isQuotaUrgent({
+      remainingPercent: 80,
+      resetsAt: (now + 31 * 60_000) / 1_000,
+    }, now)).toBe(false);
+  });
+
+  it('does not mark elapsed or missing quota windows urgent', () => {
+    expect(isQuotaUrgent({ remainingPercent: 80, resetsAt: now / 1_000 }, now)).toBe(false);
+    expect(isQuotaUrgent(undefined, now)).toBe(false);
   });
 });

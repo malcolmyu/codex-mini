@@ -1,3 +1,18 @@
+interface QuotaUrgencyInput {
+  remainingPercent: number;
+  resetsAt: number | null;
+}
+
+export function isQuotaUrgent(
+  value: QuotaUrgencyInput | null | undefined,
+  nowMs = Date.now(),
+): boolean {
+  if (!value || !Number.isFinite(value.remainingPercent) || value.remainingPercent < 40) return false;
+  if (typeof value.resetsAt !== 'number' || !Number.isFinite(value.resetsAt)) return false;
+  const remainingMs = value.resetsAt * 1_000 - nowMs;
+  return remainingMs > 0 && remainingMs <= 30 * 60_000;
+}
+
 // Short enough to remain legible inside the 52px orb centre.
 export function formatOrbReset(resetsAt: number | null | undefined, nowMs = Date.now()): string {
   if (typeof resetsAt !== 'number' || !Number.isFinite(resetsAt)) return '—';

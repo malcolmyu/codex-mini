@@ -1,15 +1,23 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { currentMonitor, getCurrentWindow } from '@tauri-apps/api/window';
-import { LogicalSize, PhysicalPosition } from '@tauri-apps/api/dpi';
+import { LogicalPosition, LogicalSize, PhysicalPosition } from '@tauri-apps/api/dpi';
 import QRCode from 'qrcode';
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
-import { formatCompactReset } from './usage-format';
+import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
+import { formatCompactReset, formatOrbReset } from './usage-format';
 import { resolveWeixinView } from './weixin-view';
 import {
+  collapsedWidgetBounds,
+  COMPACT_WIDGET_SIZE,
+  expandedWidgetBounds,
+  exceedsDragThreshold,
   EXPANDED_WIDGET_MIN_HEIGHT,
   fitExpandedWidgetHeight,
-  interpolateSize,
+  orbDragOrigin,
+  orbOriginFromWindow,
+  ORB_CHROME_INSET,
+  ORB_COLLAPSE_DELAY_MS,
+  type OrbExpandDirection,
   WIDGET_MOTION_DURATION_MS,
 } from './widget-motion';
 
@@ -167,7 +175,27 @@ function WidgetConnection({
 function UsageWidget({ status }: { status: BridgeStatus }) {
   const tasks = status.tasks?.candidates ?? [];
   const taskSignature = tasks.map((task) => task.sessionId).join(':');
-  const [compact, setCompact] = useState(() => localStorage.getItem('usage-widget-compact') === 'true');
+  const [compact, setCompact] = useState(true);
+  const compactRef = useRef(true);
+  const [pinned, setPinned] = useState(false);
+  const pinnedRef = useRef(false);
+  const [draggingOrb, setDraggingOrb] = useState(false);
+  const draggingOrbRef = useRef(false);
+  const [direction, setDirection] = useState<OrbExpandDirection>({ horizontal: 'left', vertical: 'up' });
+  const directionRef = useRef<OrbExpandDirection>(direction);
+  const panelHeightRef = useRef(EXPANDED_WIDGET_MIN_HEIGHT);
+  const collapseTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const pointerInside = useRef(false);
+  const orbGesture = useRef<{
+    pointerId: number;
+    grabX: number;
+    grabY: number;
+    startX: number;
+    startY: number;
+    dragging: boolean;
+    collapsing: boolean;
+    lastOrigin?: { x: number; y: number };
+  } | undefined>(undefined);
   const [taskOffset, setTaskOffset] = useState(0);
   const [openingTask, setOpeningTask] = useState<string>();
   const [openError, setOpenError] = useState<string>();
@@ -183,69 +211,203 @@ function UsageWidget({ status }: { status: BridgeStatus }) {
     : weixinView === 'login' ? '需扫码'
       : weixinView === 'connecting' ? '连接中' : '暂时异常';
 
-  async function resizeWidget(
-    nextCompact: boolean,
-    animate = false,
-    onMidpoint?: () => void,
-    expandedHeight = EXPANDED_WIDGET_MIN_HEIGHT,
-  ) {
-    const appWindow = getCurrentWindow();
-    const target = { width: nextCompact ? 204 : 360, height: nextCompact ? 80 : expandedHeight };
-    const reduceMotion = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
-    if (!animate || reduceMotion) {
-      onMidpoint?.();
-      await appWindow.setSize(new LogicalSize(target.width, target.height));
-    } else {
-      const from = { width: globalThis.innerWidth, height: globalThis.innerHeight };
-      let midpointCalled = false;
-      await new Promise<void>((resolve) => {
-        const startedAt = performance.now();
-        const tick = (now: number) => {
-          const progress = Math.min(1, (now - startedAt) / WIDGET_MOTION_DURATION_MS);
-          if (!midpointCalled && progress >= 0.58) {
-            midpointCalled = true;
-            onMidpoint?.();
-          }
-          const size = interpolateSize(from, target, progress);
-          void appWindow.setSize(new LogicalSize(size.width, size.height));
-          if (progress < 1) requestAnimationFrame(tick);
-          else resolve();
-        };
-        requestAnimationFrame(tick);
-      });
-      await appWindow.setSize(new LogicalSize(target.width, target.height));
-    }
-    const [position, size, monitor] = await Promise.all([
-      appWindow.outerPosition(),
-      appWindow.outerSize(),
-      currentMonitor(),
-    ]);
-    if (!monitor) return;
-    const minX = monitor.position.x;
-    const minY = monitor.position.y;
-    const maxX = minX + monitor.size.width - size.width;
-    const maxY = minY + monitor.size.height - size.height;
-    const x = Math.min(Math.max(position.x, minX), Math.max(minX, maxX));
-    const y = Math.min(Math.max(position.y, minY), Math.max(minY, maxY));
-    if (x !== position.x || y !== position.y) await appWindow.setPosition(new PhysicalPosition(x, y));
+  function clearCollapseTimer() {
+    if (collapseTimer.current === undefined) return;
+    clearTimeout(collapseTimer.current);
+    collapseTimer.current = undefined;
   }
 
-  async function toggleCompact(nextCompact: boolean) {
-    if (motionRunning.current || nextCompact === compact) return;
+  function applyPinned(next: boolean) {
+    pinnedRef.current = next;
+    setPinned(next);
+  }
+
+  async function windowGeometry() {
+    const appWindow = getCurrentWindow();
+    const [position, monitor] = await Promise.all([appWindow.outerPosition(), currentMonitor()]);
+    if (!monitor) return undefined;
+    const scale = monitor.scaleFactor;
+    return {
+      appWindow,
+      position: { x: position.x / scale, y: position.y / scale },
+      workArea: {
+        x: monitor.position.x / scale,
+        y: monitor.position.y / scale,
+        width: monitor.size.width / scale,
+        height: monitor.size.height / scale,
+      },
+    };
+  }
+
+  async function applyLogicalBounds(bounds: { x: number; y: number; width: number; height: number }) {
+    const appWindow = getCurrentWindow();
+    await appWindow.setPosition(new LogicalPosition(bounds.x, bounds.y));
+    await appWindow.setSize(new LogicalSize(bounds.width, bounds.height));
+  }
+
+  async function expandOrb(pin = false) {
+    clearCollapseTimer();
+    if (!compactRef.current || motionRunning.current) {
+      if (pin) applyPinned(true);
+      return;
+    }
     motionRunning.current = true;
-    localStorage.setItem('usage-widget-compact', String(nextCompact));
-    setMotion(nextCompact ? 'collapsing' : 'expanding');
-    if (!nextCompact) {
+    if (pin) applyPinned(true);
+    try {
+      const geometry = await windowGeometry();
+      if (!geometry) return;
+      const orb = {
+        x: geometry.position.x + ORB_CHROME_INSET,
+        y: geometry.position.y + ORB_CHROME_INSET,
+      };
+      const bounds = expandedWidgetBounds(
+        orb,
+        geometry.workArea,
+        { width: 360, height: panelHeightRef.current },
+      );
+      const nextDirection = { horizontal: bounds.horizontal, vertical: bounds.vertical } as const;
+      directionRef.current = nextDirection;
+      setDirection(nextDirection);
+      await applyLogicalBounds(bounds);
+      compactRef.current = false;
+      setMotion('expanding');
       setCompact(false);
       void invoke('refresh_insights');
+      await new Promise((resolve) => setTimeout(resolve, WIDGET_MOTION_DURATION_MS));
+    } finally {
+      setMotion('idle');
+      motionRunning.current = false;
+      if (!pointerInside.current && !pin) scheduleCollapse();
     }
+  }
+
+  async function collapseOrb(force = false) {
+    clearCollapseTimer();
+    if (compactRef.current || (!force && (motionRunning.current || pinnedRef.current))) return;
+    motionRunning.current = true;
+    if (force) applyPinned(false);
     try {
-      await resizeWidget(nextCompact, true, nextCompact ? () => setCompact(true) : undefined);
-      setCompact(nextCompact);
+      if (!force) {
+        setMotion('collapsing');
+        await new Promise((resolve) => setTimeout(resolve, WIDGET_MOTION_DURATION_MS));
+      }
+      const geometry = await windowGeometry();
+      if (!geometry) return;
+      const orb = orbOriginFromWindow(
+        {
+          ...geometry.position,
+          width: globalThis.innerWidth,
+          height: globalThis.innerHeight,
+        },
+        directionRef.current,
+      );
+      compactRef.current = true;
+      setCompact(true);
+      await applyLogicalBounds(collapsedWidgetBounds(orb));
     } finally {
       setMotion('idle');
       motionRunning.current = false;
     }
+  }
+
+  function scheduleCollapse() {
+    clearCollapseTimer();
+    if (compactRef.current || pinnedRef.current || draggingOrbRef.current) return;
+    collapseTimer.current = setTimeout(() => {
+      collapseTimer.current = undefined;
+      void collapseOrb();
+    }, ORB_COLLAPSE_DELAY_MS);
+  }
+
+  async function resizeExpandedPanel(height: number) {
+    if (compactRef.current || motionRunning.current) return;
+    const geometry = await windowGeometry();
+    if (!geometry) return;
+    const orb = orbOriginFromWindow(
+      {
+        ...geometry.position,
+        width: globalThis.innerWidth,
+        height: globalThis.innerHeight,
+      },
+      directionRef.current,
+    );
+    const bounds = expandedWidgetBounds(orb, geometry.workArea, { width: 360, height });
+    panelHeightRef.current = height;
+    const nextDirection = { horizontal: bounds.horizontal, vertical: bounds.vertical } as const;
+    directionRef.current = nextDirection;
+    setDirection(nextDirection);
+    await applyLogicalBounds(bounds);
+  }
+
+  function beginOrbGesture(event: ReactPointerEvent<HTMLElement>) {
+    if (event.button !== 0) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    orbGesture.current = {
+      pointerId: event.pointerId,
+      grabX: event.clientX - rect.left,
+      grabY: event.clientY - rect.top,
+      startX: event.screenX,
+      startY: event.screenY,
+      dragging: false,
+      collapsing: false,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function moveCollapsedOrb(origin: { x: number; y: number }) {
+    return getCurrentWindow().setPosition(new LogicalPosition(
+      origin.x - ORB_CHROME_INSET,
+      origin.y - ORB_CHROME_INSET,
+    ));
+  }
+
+  function moveOrbGesture(event: ReactPointerEvent<HTMLElement>) {
+    const gesture = orbGesture.current;
+    if (!gesture || gesture.pointerId !== event.pointerId) return;
+    const origin = orbDragOrigin(
+      { x: gesture.grabX, y: gesture.grabY },
+      { x: event.screenX, y: event.screenY },
+    );
+    gesture.lastOrigin = origin;
+    if (!gesture.dragging) {
+      if (!exceedsDragThreshold(
+        { x: gesture.startX, y: gesture.startY },
+        { x: event.screenX, y: event.screenY },
+      )) return;
+      gesture.dragging = true;
+      draggingOrbRef.current = true;
+      setDraggingOrb(true);
+      applyPinned(false);
+      if (!compactRef.current) {
+        gesture.collapsing = true;
+        void collapseOrb(true).then(() => {
+          const current = orbGesture.current;
+          if (!current || !current.dragging) return;
+          current.collapsing = false;
+          if (current.lastOrigin) void moveCollapsedOrb(current.lastOrigin);
+        });
+        return;
+      }
+    }
+    if (!gesture.collapsing) void moveCollapsedOrb(origin);
+  }
+
+  function finishOrbGesture(event: ReactPointerEvent<HTMLElement>, activateClick = true) {
+    const gesture = orbGesture.current;
+    if (!gesture || gesture.pointerId !== event.pointerId) return;
+    orbGesture.current = undefined;
+    draggingOrbRef.current = false;
+    setDraggingOrb(false);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    if (gesture.dragging) {
+      if (gesture.lastOrigin) void moveCollapsedOrb(gesture.lastOrigin);
+      return;
+    }
+    if (!activateClick) return;
+    if (compactRef.current) void expandOrb(true);
+    else applyPinned(!pinnedRef.current);
   }
 
   async function openTask(task: PendingTask) {
@@ -287,13 +449,16 @@ function UsageWidget({ status }: { status: BridgeStatus }) {
         void window.setPosition(new PhysicalPosition(position.x, position.y));
       } catch { localStorage.removeItem('usage-widget-position'); }
     }
-    void resizeWidget(compact);
-    const unlisten = window.onMoved(({ payload }) => localStorage.setItem(
-      'usage-widget-position',
-      JSON.stringify({ x: payload.x, y: payload.y }),
-    ));
-    return () => { void unlisten.then((dispose) => dispose()); };
-    // The initial compact value is intentionally applied once; later changes go through toggleCompact.
+    void window.setSize(new LogicalSize(COMPACT_WIDGET_SIZE, COMPACT_WIDGET_SIZE));
+    const unlisten = window.onMoved(({ payload }) => {
+      if (!compactRef.current) return;
+      localStorage.setItem('usage-widget-position', JSON.stringify({ x: payload.x, y: payload.y }));
+    });
+    return () => {
+      clearCollapseTimer();
+      void unlisten.then((dispose) => dispose());
+    };
+    // Startup always follows dsh-orb's collapsed cold state.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -316,6 +481,24 @@ function UsageWidget({ status }: { status: BridgeStatus }) {
   }, [compact]);
 
   useEffect(() => {
+    const enter = () => {
+      pointerInside.current = true;
+      clearCollapseTimer();
+      if (compactRef.current) void expandOrb();
+    };
+    const leave = () => {
+      pointerInside.current = false;
+      scheduleCollapse();
+    };
+    document.body.addEventListener('pointerenter', enter);
+    document.body.addEventListener('pointerleave', leave);
+    return () => {
+      document.body.removeEventListener('pointerenter', enter);
+      document.body.removeEventListener('pointerleave', leave);
+    };
+  });
+
+  useEffect(() => {
     if (compact || !expandedContent.current) return undefined;
     const content = expandedContent.current;
     let frame = 0;
@@ -327,10 +510,10 @@ function UsageWidget({ status }: { status: BridgeStatus }) {
           const monitor = await currentMonitor();
           if (cancelled || !monitor) return;
           const contentHeight = Math.ceil(content.getBoundingClientRect().height + 28);
-          const availableHeight = Math.floor(monitor.size.height / monitor.scaleFactor) - 24;
+          const availableHeight = Math.floor(monitor.size.height / monitor.scaleFactor) - ORB_CHROME_INSET * 2;
           const targetHeight = fitExpandedWidgetHeight(contentHeight, availableHeight);
-          if (Math.abs(globalThis.innerHeight - targetHeight) < 1) return;
-          await resizeWidget(false, false, undefined, targetHeight);
+          if (Math.abs(globalThis.innerHeight - ORB_CHROME_INSET * 2 - targetHeight) < 1) return;
+          await resizeExpandedPanel(targetHeight);
         })();
       });
     };
@@ -342,7 +525,7 @@ function UsageWidget({ status }: { status: BridgeStatus }) {
       cancelAnimationFrame(frame);
       observer.disconnect();
     };
-    // resizeWidget uses only current window geometry; recreating the observer on every status render is unnecessary.
+    // Window geometry is independent from status rendering; recreate only when compact state changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [compact]);
 
@@ -350,42 +533,21 @@ function UsageWidget({ status }: { status: BridgeStatus }) {
 
   const visibleTasks = tasks.slice(taskOffset, taskOffset + 3);
 
-  if (compact) {
-    return (
-      <main className={`mini-widget widget-motion-${motion}`} data-tauri-drag-region>
-        <div
-          className="mini-rings"
-          style={{
-            '--primary-quota': `${primary * 3.6}deg`,
-            '--weekly-quota': `${secondary * 3.6}deg`,
-          } as CSSProperties}
-          data-tauri-drag-region
-          aria-label={`5 小时剩余 ${primary}%，本周剩余 ${secondary}%`}
-        >
-          <div className="mini-ring-inner" data-tauri-drag-region />
-          <span>{primary}</span>
-        </div>
-        <div className="mini-copy" data-tauri-drag-region>
-          <strong>{primary}<small>%</small></strong>
-          <span>{formatCompactReset(status.usage?.primary?.resetsAt)}</span>
-        </div>
-        <button type="button" aria-label="展开用量窗口" onClick={() => void toggleCompact(false)}>›</button>
-      </main>
-    );
-  }
   return (
-    <main className={`widget-shell widget-motion-${motion}`}>
+    <main
+      className={`orb-stage ${compact ? 'compact' : 'expanded'} ${pinned ? 'pinned' : ''} ${draggingOrb ? 'dragging' : ''} expand-${direction.horizontal} expand-${direction.vertical} widget-motion-${motion}`}
+    >
+      <section className="widget-shell">
       <div className="widget-content" ref={expandedContent}>
-      <div className="widget-head" data-tauri-drag-region>
-        <div data-tauri-drag-region>
-          <span className="widget-mark"><BrandMark /></span>
-          <span className="widget-heading" data-tauri-drag-region>
+      <div className="widget-head">
+        <div>
+          <span className="widget-heading">
             <strong>Codex</strong>
-            <small data-tauri-drag-region><i className={weixinView === 'connected' ? 'online' : ''} />微信{weixinLabel}</small>
+            <small><i className={weixinView === 'connected' ? 'online' : ''} />微信{weixinLabel}</small>
           </span>
         </div>
         <div className="widget-actions">
-          <button className="icon-button" type="button" aria-label="收起用量窗口" onClick={() => void toggleCompact(true)}>−</button>
+          <button className="icon-button" type="button" aria-label="收起用量窗口" onClick={() => void collapseOrb(true)}>−</button>
           <button className="icon-button quit-button" type="button" aria-label="退出应用" onClick={() => void invoke('quit_app')}>×</button>
         </div>
       </div>
@@ -446,6 +608,33 @@ function UsageWidget({ status }: { status: BridgeStatus }) {
       )}
       {openError && <p className="widget-open-error">{openError}</p>}
       </div>
+      </section>
+      <button
+        className="usage-orb"
+        style={{
+          '--primary-quota': `${primary * 3.6}deg`,
+          '--weekly-quota': `${secondary * 3.6}deg`,
+        } as CSSProperties}
+        type="button"
+        title={formatCompactReset(status.usage?.primary?.resetsAt)}
+        aria-label={`5 小时剩余 ${primary}%，${formatCompactReset(status.usage?.primary?.resetsAt)}；本周剩余 ${secondary}%；点击固定或取消固定`}
+        onPointerDown={beginOrbGesture}
+        onPointerMove={moveOrbGesture}
+        onPointerUp={finishOrbGesture}
+        onPointerCancel={(event) => finishOrbGesture(event, false)}
+        onLostPointerCapture={(event) => finishOrbGesture(event, false)}
+        onKeyDown={(event) => {
+          if (event.key !== 'Enter' && event.key !== ' ') return;
+          event.preventDefault();
+          if (compactRef.current) void expandOrb(true);
+          else applyPinned(!pinnedRef.current);
+        }}
+      >
+        <span className="mini-orb-button" aria-hidden="true">
+          <span className="mini-orb-value"><strong>{primary}</strong><span>%</span></span>
+          <small className="mini-orb-reset">{formatOrbReset(status.usage?.primary?.resetsAt)}</small>
+        </span>
+      </button>
     </main>
   );
 }
